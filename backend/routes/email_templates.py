@@ -535,3 +535,199 @@ async def delete_asset_folder(folder: str):
     except Exception as e:
         logger.error(f"Error deleting folder: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Email sender function - will be set by main app
+_email_sender = None
+
+def set_email_sender(sender_func):
+    """Set the email sender function from main app"""
+    global _email_sender
+    _email_sender = sender_func
+    logger.info("✅ Email sender function set for email templates route")
+
+
+class BulkEmailRequest(BaseModel):
+    template_id: str
+    customer_group: str = "all"  # all, recent_buyers, review_request
+
+
+@router.post("/send-bulk")
+async def send_bulk_email(request: BulkEmailRequest):
+    """Send bulk email to customer group using a template"""
+    global supabase, _email_sender
+    
+    if supabase is None:
+        raise HTTPException(status_code=500, detail="Database niet geconfigureerd")
+    
+    if _email_sender is None:
+        raise HTTPException(status_code=500, detail="Email service niet geconfigureerd")
+    
+    # Get template
+    try:
+        template_result = supabase.table("email_templates").select("*").eq("id", request.template_id).limit(1).execute()
+        if not template_result.data:
+            raise HTTPException(status_code=404, detail="Template niet gevonden")
+        template = template_result.data[0]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Template ophalen mislukt: {e}")
+    
+    # Get customers based on group
+    customers = []
+    try:
+        if request.customer_group == "all":
+            # Get all customers from orders (unique emails)
+            orders_result = supabase.table("orders").select("customer_email, customer_name").execute()
+            seen_emails = set()
+            for order in orders_result.data or []:
+                email = order.get("customer_email", "").strip().lower()
+                if email and email not in seen_emails:
+                    seen_emails.add(email)
+                    customers.append({
+                        "email": email,
+                        "name": order.get("customer_name", "").split()[0] if order.get("customer_name") else ""
+                    })
+        elif request.customer_group == "review_request":
+            # Customers with delivered orders who haven't left a review
+            orders_result = supabase.table("orders").select("*").eq("status", "delivered").execute()
+            seen_emails = set()
+            for order in orders_result.data or []:
+                email = order.get("customer_email", "").strip().lower()
+                if email and email not in seen_emails:
+                    seen_emails.add(email)
+                    customers.append({
+                        "email": email,
+                        "name": order.get("customer_name", "").split()[0] if order.get("customer_name") else "",
+                        "order_id": order.get("id")
+                    })
+        elif request.customer_group == "recent_buyers":
+            # Customers who bought in last 30 days
+            from datetime import datetime, timedelta
+            cutoff = (datetime.now() - timedelta(days=30)).isoformat()
+            orders_result = supabase.table("orders").select("*").gte("created_at", cutoff).execute()
+            seen_emails = set()
+            for order in orders_result.data or []:
+                email = order.get("customer_email", "").strip().lower()
+                if email and email not in seen_emails:
+                    seen_emails.add(email)
+                    customers.append({
+                        "email": email,
+                        "name": order.get("customer_name", "").split()[0] if order.get("customer_name") else ""
+                    })
+    except Exception as e:
+        logger.error(f"Error fetching customers: {e}")
+        raise HTTPException(status_code=500, detail=f"Klanten ophalen mislukt: {e}")
+    
+    if not customers:
+        return {"success": True, "total_sent": 0, "message": "Geen klanten gevonden voor deze groep"}
+    
+    # Send emails
+    sent = 0
+    failed = 0
+    
+    subject = template.get("subject", "Droomvriendjes")
+    content = template.get("content", "")
+    
+    for customer in customers:
+        try:
+            # Personalize template
+            personalized_subject = subject.replace("{{firstname}}", customer.get("name", "")).replace("{{naam}}", customer.get("name", ""))
+            personalized_content = content.replace("{{firstname}}", customer.get("name", "")).replace("{{naam}}", customer.get("name", ""))
+            personalized_content = personalized_content.replace("{{email}}", customer.get("email", ""))
+            
+            # Add unsubscribe link if not present
+            if "unsubscribe" not in personalized_content.lower():
+                personalized_content += f'<br><br><p style="font-size:12px;color:#999;text-align:center;">Niet meer ontvangen? <a href="https://droomvriendjes.nl/unsubscribe?email={customer.get("email", "")}">Afmelden</a></p>'
+            
+            # Plain text version
+            import html as html_module
+            text_content = html_module.unescape(re.sub(r'<[^>]+>', '', personalized_content))
+            
+            # Send via the configured sender
+            success = _email_sender(
+                to_email=customer.get("email"),
+                subject=personalized_subject,
+                html_content=personalized_content,
+                text_content=text_content,
+                email_type="marketing",
+                customer_name=customer.get("name")
+            )
+            
+            if success:
+                sent += 1
+            else:
+                failed += 1
+                
+        except Exception as e:
+            logger.error(f"Failed to send to {customer.get('email')}: {e}")
+            failed += 1
+    
+    return {
+        "success": True,
+        "total_sent": sent,
+        "total_failed": failed,
+        "message": f"Email verstuurd naar {sent} klanten ({failed} mislukt)"
+    }
+
+
+@router.post("/send-test")
+async def send_test_email(template_id: str, test_email: str = "info@droomvriendjes.nl"):
+    """Send a test email to verify template"""
+    global supabase, _email_sender
+    
+    if supabase is None:
+        raise HTTPException(status_code=500, detail="Database niet geconfigureerd")
+    
+    if _email_sender is None:
+        raise HTTPException(status_code=500, detail="Email service niet geconfigureerd")
+    
+    # Get template
+    try:
+        template_result = supabase.table("email_templates").select("*").eq("id", template_id).limit(1).execute()
+        if not template_result.data:
+            raise HTTPException(status_code=404, detail="Template niet gevonden")
+        template = template_result.data[0]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Template ophalen mislukt: {e}")
+    
+    # Personalize with test data
+    subject = template.get("subject", "Test Email - Droomvriendjes")
+    content = template.get("content", "")
+    
+    test_data = {
+        "firstname": "Test",
+        "naam": "Test Gebruiker",
+        "lastname": "Klant",
+        "email": test_email,
+        "discount_code": "TEST20",
+        "discount_percentage": "20%",
+        "cart_link": "https://droomvriendjes.nl/checkout",
+        "unsubscribe_link": "https://droomvriendjes.nl/unsubscribe"
+    }
+    
+    for key, value in test_data.items():
+        subject = subject.replace(f"{{{{{key}}}}}", value)
+        content = content.replace(f"{{{{{key}}}}}", value)
+    
+    # Plain text version
+    import html as html_module
+    text_content = html_module.unescape(re.sub(r'<[^>]+>', '', content))
+    
+    # Send test email
+    success = _email_sender(
+        to_email=test_email,
+        subject=f"[TEST] {subject}",
+        html_content=content,
+        text_content=text_content,
+        email_type="marketing",
+        customer_name="Test"
+    )
+    
+    if success:
+        return {"success": True, "message": f"Test email verstuurd naar {test_email}"}
+    else:
+        raise HTTPException(status_code=500, detail="Test email verzenden mislukt")

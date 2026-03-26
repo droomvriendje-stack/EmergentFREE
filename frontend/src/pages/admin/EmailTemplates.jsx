@@ -191,7 +191,7 @@ const EmailTemplatesAdmin = () => {
     }
 
     try {
-      const response = await fetch(`${API_URL}/api/email/send-bulk`, {
+      const response = await fetch(`${API_URL}/api/email-templates/send-bulk`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

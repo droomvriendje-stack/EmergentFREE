@@ -196,6 +196,7 @@ if USE_SUPABASE and supabase_client:
     # Email templates (Supabase only)
     logger.info("🚀 Using SUPABASE for email templates")
     email_templates_route.set_supabase_client(supabase_client)
+    # Note: email_sender will be set after send_email function is defined
     api_router.include_router(email_templates_route.router)
     
     # Gift cards (Supabase)
@@ -449,6 +450,11 @@ def send_email(to_email: str, subject: str, html_content: str, text_content: str
         _log_email_to_db(to_email, subject, email_type, "failed", order_id, customer_name, {"error": str(e)})
         
         return False
+
+
+# Register email sender for templates route
+if USE_SUPABASE:
+    email_templates_route.set_email_sender(send_email)
 
 
 # Set email sender for CSV import route
@@ -2073,6 +2079,47 @@ async def get_admin_order_detail(order_id: str):
             items_result = supabase_client.table("order_items").select("*").eq("order_id", order_id).execute()
             items = items_result.data or []
             
+            # Fetch product images for each item
+            items_with_images = []
+            for i in items:
+                item_data = {
+                    "product_name": i.get("product_name", ""),
+                    "product_sku": i.get("product_sku", ""),
+                    "quantity": i.get("quantity", 1),
+                    "unit_price": i.get("unit_price", 0),
+                    "total_price": i.get("quantity", 1) * i.get("unit_price", 0),
+                    "image_url": None
+                }
+                
+                # Try to get product image from products table
+                product_sku = i.get("product_sku", "")
+                product_name = i.get("product_name", "")
+                
+                # First try by SKU/ID
+                if product_sku:
+                    try:
+                        product_result = supabase_client.table("products").select("image, gallery").eq("id", product_sku).limit(1).execute()
+                        if product_result.data:
+                            product = product_result.data[0]
+                            item_data["image_url"] = product.get("image")
+                    except Exception:
+                        pass
+                
+                # If no image found, try by product name (fuzzy match)
+                if not item_data["image_url"] and product_name:
+                    try:
+                        # Extract key word from product name (first word after common prefixes)
+                        search_term = product_name.replace("Droomvriendjes", "").replace("Nachtlampje", "").strip().split()[0] if product_name else ""
+                        if search_term and len(search_term) >= 3:
+                            product_result = supabase_client.table("products").select("image, gallery").ilike("name", f"%{search_term}%").limit(1).execute()
+                            if product_result.data:
+                                product = product_result.data[0]
+                                item_data["image_url"] = product.get("image")
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch product image by name: {e}")
+                
+                items_with_images.append(item_data)
+            
             return {
                 "order": {
                     "order_id": order.get("id", ""),
@@ -2096,13 +2143,7 @@ async def get_admin_order_detail(order_id: str):
                     "coupon_code": order.get("discount_code"),
                     "discount_amount": order.get("discount_amount", 0)
                 },
-                "items": [{
-                    "product_name": i.get("product_name", ""),
-                    "product_sku": i.get("product_sku", ""),
-                    "quantity": i.get("quantity", 1),
-                    "unit_price": i.get("unit_price", 0),
-                    "total_price": i.get("quantity", 1) * i.get("unit_price", 0)
-                } for i in items]
+                "items": items_with_images
             }
         else:
             raise HTTPException(status_code=500, detail="Database not configured")

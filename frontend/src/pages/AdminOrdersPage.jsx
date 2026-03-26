@@ -394,17 +394,35 @@ const AdminOrdersPage = () => {
                                     <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Producten</h4>
                                     <div className="bg-white rounded-lg border divide-y">
                                       {(orderDetail.items || []).map((item, idx) => (
-                                        <div key={idx} className="p-3 flex justify-between items-center text-sm">
-                                          <div>
-                                            <div className="font-medium">{item.product_name}</div>
-                                            <div className="text-xs text-gray-500">{item.quantity}x &euro;{item.unit_price?.toFixed(2)}</div>
+                                        <div key={idx} className="p-3 flex items-center gap-3 text-sm">
+                                          {/* Product Image */}
+                                          <div className="w-12 h-12 rounded-lg bg-gray-100 border flex-shrink-0 overflow-hidden">
+                                            {item.image_url || item.product_image ? (
+                                              <img 
+                                                src={item.image_url || item.product_image} 
+                                                alt={item.product_name}
+                                                className="w-full h-full object-cover"
+                                                onError={(e) => {
+                                                  e.target.onerror = null;
+                                                  e.target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(item.product_name?.charAt(0) || 'P')}&background=8B7355&color=fff&size=48`;
+                                                }}
+                                              />
+                                            ) : (
+                                              <div className="w-full h-full flex items-center justify-center text-gray-400">
+                                                <Package className="w-6 h-6" />
+                                              </div>
+                                            )}
                                           </div>
-                                          <span className="font-semibold">&euro;{item.total_price?.toFixed(2)}</span>
+                                          <div className="flex-1 min-w-0">
+                                            <div className="font-medium truncate">{item.product_name}</div>
+                                            <div className="text-xs text-gray-500">{item.quantity}x €{item.unit_price?.toFixed(2)}</div>
+                                          </div>
+                                          <span className="font-semibold">€{item.total_price?.toFixed(2)}</span>
                                         </div>
                                       ))}
                                       <div className="p-3 flex justify-between items-center bg-gray-50 font-semibold text-sm">
                                         <span>Totaal</span>
-                                        <span className="text-[#8B7355]">&euro;{orderDetail.order?.total_amount?.toFixed(2)}</span>
+                                        <span className="text-[#8B7355]">€{orderDetail.order?.total_amount?.toFixed(2)}</span>
                                       </div>
                                     </div>
                                   </div>

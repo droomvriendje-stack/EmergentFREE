@@ -300,10 +300,29 @@ export default function AICampaignMakerPage() {
                           <Icon className="w-5 h-5" />
                           <span className="font-semibold">{cfg.label}</span>
                         </div>
-                        <button onClick={() => copyToClipboard(fullPost, copyKey)} data-testid={`copy-${platform}`}
-                          className="flex items-center gap-1.5 bg-white/20 hover:bg-white/30 px-3 py-1.5 rounded-lg text-sm text-white transition-colors">
-                          {copied[copyKey] ? <><Check className="w-4 h-4" /> Gekopieerd!</> : <><Copy className="w-4 h-4" /> Kopieer</>}
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => copyToClipboard(fullPost, copyKey)} data-testid={`copy-${platform}`}
+                            className="flex items-center gap-1.5 bg-white/20 hover:bg-white/30 px-3 py-1.5 rounded-lg text-sm text-white transition-colors">
+                            {copied[copyKey] ? <><Check className="w-4 h-4" /> Gekopieerd!</> : <><Copy className="w-4 h-4" /> Kopieer</>}
+                          </button>
+                          <button 
+                            onClick={() => {
+                              // Copy text and open platform
+                              copyToClipboard(fullPost, copyKey);
+                              const urls = {
+                                facebook: 'https://www.facebook.com/',
+                                instagram: 'https://www.instagram.com/',
+                                tiktok: 'https://www.tiktok.com/upload'
+                              };
+                              window.open(urls[platform], '_blank');
+                            }}
+                            data-testid={`post-${platform}`}
+                            className="flex items-center gap-1.5 bg-white hover:bg-white/90 px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors"
+                            style={{ color: cfg.color }}
+                          >
+                            <Send className="w-4 h-4" /> Posten
+                          </button>
+                        </div>
                       </div>
                       <div className="p-5 space-y-3">
                         {content.headline && (
