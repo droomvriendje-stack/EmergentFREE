@@ -60,7 +60,8 @@ const MarketingCommandCenter = () => {
       });
       if (res.ok) {
         const data = await res.json();
-        setTemplates(data.templates || []);
+        // API returns array directly, not {templates: [...]}
+        setTemplates(Array.isArray(data) ? data : (data.templates || []));
       }
     } catch (e) { console.error(e); }
   };

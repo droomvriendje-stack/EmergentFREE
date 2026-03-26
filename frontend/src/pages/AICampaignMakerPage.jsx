@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Sparkles, Send, Copy, Check, RefreshCw, Facebook, Instagram, ChevronDown, Loader2 } from 'lucide-react';
+import { ArrowLeft, Sparkles, Send, Copy, Check, RefreshCw, Facebook, Instagram, ChevronDown, Loader2, Image, Video, X, Upload } from 'lucide-react';
 
 const API_URL = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -46,6 +46,11 @@ export default function AICampaignMakerPage() {
   const [history, setHistory] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
   const [configStatus, setConfigStatus] = useState(null);
+  
+  // Media upload state
+  const [mediaFile, setMediaFile] = useState(null);
+  const [mediaPreview, setMediaPreview] = useState(null);
+  const [mediaType, setMediaType] = useState(null); // 'image' or 'video'
 
   useEffect(() => {
     fetchProducts();
@@ -117,6 +122,41 @@ export default function AICampaignMakerPage() {
     navigator.clipboard.writeText(text);
     setCopied(prev => ({ ...prev, [key]: true }));
     setTimeout(() => setCopied(prev => ({ ...prev, [key]: false })), 2000);
+  };
+
+  // Media upload handlers
+  const handleMediaUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    const isVideo = file.type.startsWith('video/');
+    const isImage = file.type.startsWith('image/');
+    
+    if (!isVideo && !isImage) {
+      alert('Alleen afbeeldingen en video bestanden zijn toegestaan');
+      return;
+    }
+    
+    // Max size: 50MB for video, 10MB for image
+    const maxSize = isVideo ? 50 * 1024 * 1024 : 10 * 1024 * 1024;
+    if (file.size > maxSize) {
+      alert(`Bestand te groot. Maximum: ${isVideo ? '50MB' : '10MB'}`);
+      return;
+    }
+    
+    setMediaFile(file);
+    setMediaType(isVideo ? 'video' : 'image');
+    
+    // Create preview
+    const reader = new FileReader();
+    reader.onloadend = () => setMediaPreview(reader.result);
+    reader.readAsDataURL(file);
+  };
+  
+  const removeMedia = () => {
+    setMediaFile(null);
+    setMediaPreview(null);
+    setMediaType(null);
   };
 
   const getFullPost = (content) => {
@@ -192,6 +232,72 @@ export default function AICampaignMakerPage() {
                     className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-amber-500 resize-none" />
                 </div>
               )}
+            </div>
+
+            {/* Media Upload Section */}
+            <div className="bg-gray-900/60 border border-gray-800 rounded-2xl p-6" data-testid="media-upload">
+              <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                <Image className="w-5 h-5 text-amber-500" />
+                Afbeelding of Video
+              </h2>
+              
+              {!mediaFile ? (
+                <label className="flex flex-col items-center justify-center w-full h-40 border-2 border-dashed border-gray-700 rounded-xl cursor-pointer hover:border-amber-500/50 transition-colors bg-gray-800/30">
+                  <input
+                    type="file"
+                    accept="image/*,video/*"
+                    onChange={handleMediaUpload}
+                    className="hidden"
+                    data-testid="media-upload-input"
+                  />
+                  <Upload className="w-10 h-10 text-gray-500 mb-3" />
+                  <p className="text-sm text-gray-400 text-center">
+                    <span className="text-amber-500 font-medium">Klik om te uploaden</span><br/>
+                    of sleep een bestand hierheen
+                  </p>
+                  <p className="text-xs text-gray-500 mt-2">Afbeelding (max 10MB) of Video (max 50MB)</p>
+                </label>
+              ) : (
+                <div className="relative">
+                  {mediaType === 'video' ? (
+                    <div className="relative rounded-xl overflow-hidden bg-black">
+                      <video 
+                        src={mediaPreview} 
+                        className="w-full h-48 object-contain"
+                        controls
+                      />
+                      <div className="absolute top-2 left-2 bg-black/70 px-2 py-1 rounded-lg flex items-center gap-1">
+                        <Video className="w-4 h-4 text-amber-500" />
+                        <span className="text-xs text-white">Video</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="relative rounded-xl overflow-hidden">
+                      <img 
+                        src={mediaPreview} 
+                        alt="Preview" 
+                        className="w-full h-48 object-cover"
+                      />
+                      <div className="absolute top-2 left-2 bg-black/70 px-2 py-1 rounded-lg flex items-center gap-1">
+                        <Image className="w-4 h-4 text-amber-500" />
+                        <span className="text-xs text-white">Afbeelding</span>
+                      </div>
+                    </div>
+                  )}
+                  <button
+                    onClick={removeMedia}
+                    className="absolute top-2 right-2 p-1.5 bg-red-500 hover:bg-red-600 rounded-lg transition-colors"
+                    data-testid="remove-media"
+                  >
+                    <X className="w-4 h-4 text-white" />
+                  </button>
+                  <p className="text-xs text-gray-400 mt-2 truncate">{mediaFile.name}</p>
+                </div>
+              )}
+              
+              <p className="text-xs text-gray-500 mt-3">
+                💡 Tip: Voeg een afbeelding of video toe om te uploaden bij je social media post
+              </p>
             </div>
 
             {/* Platform Selection */}
@@ -285,6 +391,24 @@ export default function AICampaignMakerPage() {
                     <RefreshCw className="w-4 h-4" /> Opnieuw
                   </button>
                 </div>
+
+                {/* Show uploaded media if present */}
+                {mediaPreview && (
+                  <div className="bg-gray-900/60 border border-gray-800 rounded-2xl overflow-hidden">
+                    <div className="bg-gradient-to-r from-amber-500/20 to-transparent px-5 py-3 flex items-center gap-2">
+                      {mediaType === 'video' ? <Video className="w-5 h-5 text-amber-400" /> : <Image className="w-5 h-5 text-amber-400" />}
+                      <span className="font-semibold text-white">Geüploade Media</span>
+                    </div>
+                    <div className="p-4">
+                      {mediaType === 'video' ? (
+                        <video src={mediaPreview} className="w-full max-h-64 object-contain rounded-lg" controls />
+                      ) : (
+                        <img src={mediaPreview} alt="Upload" className="w-full max-h-64 object-contain rounded-lg" />
+                      )}
+                      <p className="text-xs text-gray-400 mt-2">💡 Download en upload dit bestand bij je social media post</p>
+                    </div>
+                  </div>
+                )}
 
                 {Object.entries(result.generated_content || {}).map(([platform, content]) => {
                   const cfg = PLATFORM_CONFIG[platform];
