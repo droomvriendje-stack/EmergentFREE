@@ -394,13 +394,15 @@ async def api_health_check():
 # Email logging helper - will be populated after routes are set up
 _email_log_queue = []
 
-def _log_email_to_db(to_email: str, subject: str, email_type: str, status: str, order_id: str = None, customer_name: str = None, metadata: dict = None):
-    """Log email to database via Supabase"""
+def _log_email_to_db(to_email: str, subject: str, email_type: str, status: str, order_id: str = None, customer_name: str = None, metadata: dict = None) -> str:
+    """Log email to database via Supabase, returns email_id for tracking"""
+    email_id = None
     try:
         if supabase_client:
             import uuid as _uuid
+            email_id = str(_uuid.uuid4())
             log_data = {
-                "id": str(_uuid.uuid4()),
+                "id": email_id,
                 "to_email": to_email,
                 "subject": subject,
                 "email_type": email_type,
@@ -410,15 +412,59 @@ def _log_email_to_db(to_email: str, subject: str, email_type: str, status: str, 
                 "metadata": json.dumps(metadata) if metadata else None,
                 "created_at": datetime.now(timezone.utc).isoformat()
             }
-            supabase_client.table("email_logs").insert(log_data).execute()
-            logger.info(f"📧 Email logged: {email_type} to {to_email}")
+            # Try to add opens/clicks, but don't fail if columns don't exist
+            try:
+                log_data["opens"] = 0
+                log_data["clicks"] = 0
+                supabase_client.table("email_logs").insert(log_data).execute()
+            except Exception as col_error:
+                if "column" in str(col_error).lower() or "schema" in str(col_error).lower():
+                    # Remove optional columns and retry
+                    log_data.pop("opens", None)
+                    log_data.pop("clicks", None)
+                    supabase_client.table("email_logs").insert(log_data).execute()
+                else:
+                    raise col_error
+            logger.info(f"📧 Email logged: {email_type} to {to_email} (ID: {email_id})")
     except Exception as e:
         logger.error(f"Failed to log email to DB: {e}")
+    return email_id
+
+
+def _add_tracking_to_email(html_content: str, email_id: str, base_url: str = "https://droomvriendjes.nl") -> str:
+    """Add tracking pixel to HTML email content"""
+    if not email_id:
+        return html_content
+    
+    # Tracking pixel HTML
+    tracking_pixel = f'<img src="{base_url}/api/email-logs/track/open/{email_id}" width="1" height="1" style="display:none;visibility:hidden;" alt="" />'
+    
+    # Add tracking pixel before closing body tag
+    if '</body>' in html_content.lower():
+        # Case insensitive replacement
+        import re
+        html_content = re.sub(
+            r'</body>',
+            f'{tracking_pixel}</body>',
+            html_content,
+            flags=re.IGNORECASE
+        )
+    else:
+        # No body tag, append to end
+        html_content += tracking_pixel
+    
+    return html_content
 
 
 def send_email(to_email: str, subject: str, html_content: str, text_content: str, reply_to: str = None, email_type: str = "general", order_id: str = None, customer_name: str = None):
-    """Generic email sending function with logging"""
+    """Generic email sending function with logging and tracking"""
+    # First log the email to get an ID for tracking
+    email_id = _log_email_to_db(to_email, subject, email_type, "pending", order_id, customer_name)
+    
     try:
+        # Add tracking pixel to HTML content
+        tracked_html = _add_tracking_to_email(html_content, email_id)
+        
         msg = MIMEMultipart('alternative')
         msg['Subject'] = subject
         msg['From'] = f'Droomvriendjes <{SMTP_FROM}>'
@@ -428,7 +474,7 @@ def send_email(to_email: str, subject: str, html_content: str, text_content: str
             msg['Reply-To'] = reply_to
         
         msg.attach(MIMEText(text_content, 'plain'))
-        msg.attach(MIMEText(html_content, 'html'))
+        msg.attach(MIMEText(tracked_html, 'html'))
         
         # Send email via SMTP SSL
         context = ssl.create_default_context()
@@ -438,16 +484,21 @@ def send_email(to_email: str, subject: str, html_content: str, text_content: str
         
         logger.info(f"✅ EMAIL SENT: To={to_email}, Subject={subject}")
         
-        # Log to database
-        _log_email_to_db(to_email, subject, email_type, "sent", order_id, customer_name)
+        # Update status to sent
+        if supabase_client and email_id:
+            supabase_client.table("email_logs").update({"status": "sent"}).eq("id", email_id).execute()
         
         return True
         
     except Exception as e:
         logger.error(f"❌ EMAIL FAILED: To={to_email}, Subject={subject}, Error={str(e)}")
         
-        # Log failed email to database
-        _log_email_to_db(to_email, subject, email_type, "failed", order_id, customer_name, {"error": str(e)})
+        # Update status to failed
+        if supabase_client and email_id:
+            supabase_client.table("email_logs").update({
+                "status": "failed",
+                "metadata": json.dumps({"error": str(e)})
+            }).eq("id", email_id).execute()
         
         return False
 
