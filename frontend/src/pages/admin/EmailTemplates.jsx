@@ -832,6 +832,16 @@ const EmailTemplatesAdmin = () => {
                       <Eye className="w-4 h-4 mr-1" />
                       Preview
                     </Button>
+                    {selectedTemplate && (
+                      <Button 
+                        onClick={() => sendToCustomers(selectedTemplate.id)} 
+                        variant="outline"
+                        className="bg-green-600 hover:bg-green-700 text-white border-green-600"
+                      >
+                        <Send className="w-4 h-4 mr-1" />
+                        Verzend Nu
+                      </Button>
+                    )}
                     <Button onClick={handleSave} className="bg-[#8B7355] hover:bg-[#6d5a45]">
                       {saveStatus === 'saving' ? (
                         <span className="animate-spin">⏳</span>
