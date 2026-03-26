@@ -1,11 +1,14 @@
 """
 Products API Routes - MongoDB based product catalog
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from typing import List, Optional
 from datetime import datetime, timezone
+from pydantic import BaseModel
 import logging
-from bson import ObjectId
+import uuid
+import os
+import shutil
 
 logger = logging.getLogger(__name__)
 
@@ -19,404 +22,53 @@ def set_database(database):
     global db
     db = database
 
+
+# Pydantic models for product CRUD
+class ProductCreate(BaseModel):
+    name: str
+    shortName: str
+    price: float
+    originalPrice: Optional[float] = None
+    description: str
+    features: List[str] = []
+    benefits: List[str] = []
+    sku: str
+    series: str = "basic"
+    badge: Optional[str] = None
+    inStock: bool = True
+    stock: int = 100
+    ageRange: str = "Vanaf 0 maanden"
+    warranty: str = "30 dagen slaapgarantie"
+    itemCategory: str = "Knuffels"
+    itemCategory2: Optional[str] = None
+    itemCategory3: Optional[str] = None
+    itemVariant: Optional[str] = None
+
+
+class ProductUpdate(BaseModel):
+    name: Optional[str] = None
+    shortName: Optional[str] = None
+    price: Optional[float] = None
+    originalPrice: Optional[float] = None
+    description: Optional[str] = None
+    features: Optional[List[str]] = None
+    benefits: Optional[List[str]] = None
+    sku: Optional[str] = None
+    series: Optional[str] = None
+    badge: Optional[str] = None
+    inStock: Optional[bool] = None
+    stock: Optional[int] = None
+    ageRange: Optional[str] = None
+    warranty: Optional[str] = None
+    image: Optional[str] = None
+    gallery: Optional[List[str]] = None
+    macroImage: Optional[str] = None
+    dimensionsImage: Optional[str] = None
+
 # Initial product data to seed the database
-INITIAL_PRODUCTS = [
-    {
-        "id": 1,
-        "name": "Baby Slaapmaatje Leeuw - Projector Nachtlamp met White Noise",
-        "shortName": "Leeuw Projector",
-        "price": 49.95,
-        "originalPrice": 64.95,
-        "image": "https://i.imgur.com/E4g3eOy.jpeg",
-        "gallery": [
-            "https://i.imgur.com/E4g3eOy.jpeg",
-            "https://i.imgur.com/zYLuTAg.jpeg",
-            "https://i.imgur.com/WfHQKKr.jpeg"
-        ],
-        "description": "Een prachtige leeuw die sterren projecteert op het plafond en rustgevende geluiden afspeelt.",
-        "features": [
-            "🌟 Sterrenprojectie in 3 kleuren",
-            "🎵 8 rustgevende slaapliedjes",
-            "🔇 White noise & natuurgeluiden",
-            "⏰ 30 minuten timer",
-            "🔋 USB oplaadbaar"
-        ],
-        "benefits": [
-            "Helpt je baby sneller in slaap te vallen",
-            "Creëert een rustgevende slaapomgeving",
-            "Perfect voor in de kinderkamer"
-        ],
-        "rating": 4.5,
-        "reviews": 187,
-        "badge": "BESTSELLER",
-        "inStock": True,
-        "ageRange": "Vanaf 0 maanden",
-        "warranty": "14 dagen geld-terug-garantie",
-        "itemId": "KNUF_001",
-        "itemCategory": "Knuffels",
-        "itemCategory2": "Slaapknuffels",
-        "itemCategory3": "Wilde Dieren",
-        "itemVariant": "Leeuw"
-    },
-    {
-        "id": 2,
-        "name": "Baby Nachtlamp Schaap - Slaapknuffel met Sterrenprojector",
-        "shortName": "Schaap Projector",
-        "price": 59.95,
-        "originalPrice": 74.95,
-        "image": "https://i.imgur.com/vYpeb4c.jpeg",
-        "gallery": [
-            "https://i.imgur.com/vYpeb4c.jpeg",
-            "https://i.imgur.com/62h7jyd.jpeg",
-            "https://i.imgur.com/JxKouOL.jpeg"
-        ],
-        "description": "Een zacht schaapje met sterrenprojectie en rustgevende melodieën.",
-        "features": [
-            "🌟 Sterrenprojectie in 3 kleuren",
-            "🎵 8 rustgevende slaapliedjes",
-            "🔇 White noise & natuurgeluiden",
-            "⏰ 30 minuten timer",
-            "🔋 USB oplaadbaar"
-        ],
-        "benefits": [
-            "Helpt je baby sneller in slaap te vallen",
-            "Creëert een rustgevende slaapomgeving",
-            "Perfect voor in de kinderkamer"
-        ],
-        "rating": 4.7,
-        "reviews": 156,
-        "badge": "POPULAIR",
-        "inStock": True,
-        "ageRange": "Vanaf 0 maanden",
-        "warranty": "14 dagen geld-terug-garantie",
-        "itemId": "KNUF_002",
-        "itemCategory": "Knuffels",
-        "itemCategory2": "Slaapknuffels",
-        "itemCategory3": "Boerderijdieren",
-        "itemVariant": "Schaap"
-    },
-    {
-        "id": 3,
-        "name": "Teddy Projector Knuffel - Bruine Beer met Nachtlicht",
-        "shortName": "Teddy Projector",
-        "price": 59.95,
-        "originalPrice": 74.95,
-        "image": "https://i.imgur.com/jM6J4oV.jpeg",
-        "gallery": [
-            "https://i.imgur.com/jM6J4oV.jpeg",
-            "https://i.imgur.com/bMpTi4F.jpeg",
-            "https://i.imgur.com/LuZnyJN.jpeg"
-        ],
-        "description": "Een knuffelzachte teddy met sterrenprojector en rustgevende melodieën.",
-        "features": [
-            "🌟 Sterrenprojectie in 3 kleuren",
-            "🎵 8 rustgevende slaapliedjes",
-            "🔇 White noise & natuurgeluiden",
-            "⏰ 30 minuten timer",
-            "🔋 USB oplaadbaar"
-        ],
-        "benefits": [
-            "Helpt je baby sneller in slaap te vallen",
-            "Creëert een rustgevende slaapomgeving",
-            "Perfect voor in de kinderkamer"
-        ],
-        "rating": 4.6,
-        "reviews": 142,
-        "badge": None,
-        "inStock": True,
-        "ageRange": "Vanaf 0 maanden",
-        "warranty": "14 dagen geld-terug-garantie",
-        "itemId": "KNUF_003",
-        "itemCategory": "Knuffels",
-        "itemCategory2": "Slaapknuffels",
-        "itemCategory3": "Beren",
-        "itemVariant": "Bruin"
-    },
-    {
-        "id": 4,
-        "name": "Pinguïn Nachtlampje - Slaapknuffel met Projectie",
-        "shortName": "Pinguïn Projector",
-        "price": 59.95,
-        "originalPrice": 74.95,
-        "image": "https://i.imgur.com/sYVb8K4.jpeg",
-        "gallery": [
-            "https://i.imgur.com/sYVb8K4.jpeg",
-            "https://i.imgur.com/RqYk1oe.jpeg"
-        ],
-        "description": "Een schattige pinguïn met sterrenprojector en white noise functies.",
-        "features": [
-            "🌟 Sterrenprojectie in 3 kleuren",
-            "🎵 8 rustgevende slaapliedjes",
-            "🔇 White noise & natuurgeluiden",
-            "⏰ 30 minuten timer",
-            "🔋 USB oplaadbaar"
-        ],
-        "benefits": [
-            "Helpt je baby sneller in slaap te vallen",
-            "Creëert een rustgevende slaapomgeving",
-            "Perfect voor in de kinderkamer"
-        ],
-        "rating": 4.4,
-        "reviews": 98,
-        "badge": None,
-        "inStock": True,
-        "ageRange": "Vanaf 0 maanden",
-        "warranty": "14 dagen geld-terug-garantie",
-        "itemId": "KNUF_004",
-        "itemCategory": "Knuffels",
-        "itemCategory2": "Slaapknuffels",
-        "itemCategory3": "Pooldieren",
-        "itemVariant": "Pinguïn"
-    },
-    {
-        "id": 5,
-        "name": "Dinosaurus Slaapknuffel - Stoere Dino met Nachtlamp",
-        "shortName": "Dino Projector",
-        "price": 59.95,
-        "originalPrice": 74.95,
-        "image": "https://i.imgur.com/z4cyllw.jpeg",
-        "gallery": [
-            "https://i.imgur.com/z4cyllw.jpeg",
-            "https://i.imgur.com/mWJSBxI.jpeg"
-        ],
-        "description": "Een stoere dinosaurus met sterrenprojector voor kleine avonturiers.",
-        "features": [
-            "🌟 Sterrenprojectie in 3 kleuren",
-            "🎵 8 rustgevende slaapliedjes",
-            "🔇 White noise & natuurgeluiden",
-            "⏰ 30 minuten timer",
-            "🔋 USB oplaadbaar"
-        ],
-        "benefits": [
-            "Perfect voor kleine avonturiers",
-            "Helpt angst voor het donker overwinnen",
-            "Stoer design dat jongens geweldig vinden"
-        ],
-        "rating": 4.8,
-        "reviews": 76,
-        "badge": None,
-        "inStock": True,
-        "ageRange": "Vanaf 0 maanden",
-        "warranty": "14 dagen geld-terug-garantie",
-        "itemId": "KNUF_005",
-        "itemCategory": "Knuffels",
-        "itemCategory2": "Slaapknuffels",
-        "itemCategory3": "Fantasiedieren",
-        "itemVariant": "Dinosaurus"
-    },
-    {
-        "id": 6,
-        "name": "Slaapknuffel Duo Schaap & Teddy - Voordeelset",
-        "shortName": "Duo Set",
-        "price": 89.95,
-        "originalPrice": 119.90,
-        "image": "https://i.imgur.com/4blLAM7.jpeg",
-        "gallery": [
-            "https://i.imgur.com/4blLAM7.jpeg",
-            "https://i.imgur.com/1JbBGgT.jpeg"
-        ],
-        "description": "Twee schattige slaapknuffels met nachtlampjes - perfect voor broertjes en zusjes!",
-        "features": [
-            "🎁 2 knuffels in één set",
-            "🌟 Beide met sterrenprojectie",
-            "🎵 Elk 8 rustgevende slaapliedjes",
-            "💰 €30 voordeelkorting",
-            "🔋 USB oplaadbaar"
-        ],
-        "benefits": [
-            "Perfect voor broertjes en zusjes",
-            "Extra voordelig als set",
-            "Twee verschillende knuffels"
-        ],
-        "rating": 4.9,
-        "reviews": 64,
-        "badge": "VOORDEELSET",
-        "inStock": True,
-        "ageRange": "Vanaf 0 maanden",
-        "warranty": "14 dagen geld-terug-garantie",
-        "itemId": "KNUF_006",
-        "itemCategory": "Knuffels",
-        "itemCategory2": "Voordeelsets",
-        "itemCategory3": None,
-        "itemVariant": "Duo"
-    },
-    {
-        "id": 7,
-        "name": "Olifant Sterrenprojector - Zachte Knuffel met Licht",
-        "shortName": "Olifant Projector",
-        "price": 54.95,
-        "originalPrice": 69.95,
-        "image": "https://i.imgur.com/J5xEAMt.jpeg",
-        "gallery": [
-            "https://i.imgur.com/J5xEAMt.jpeg",
-            "https://i.imgur.com/YmNOLVT.jpeg"
-        ],
-        "description": "Een lieve olifant met sterrenprojector en rustgevende melodieën.",
-        "features": [
-            "🌟 Sterrenprojectie in 3 kleuren",
-            "🎵 8 rustgevende slaapliedjes",
-            "🔇 White noise & natuurgeluiden",
-            "⏰ 30 minuten timer",
-            "🔋 USB oplaadbaar"
-        ],
-        "benefits": [
-            "Helpt je baby sneller in slaap te vallen",
-            "Creëert een rustgevende slaapomgeving",
-            "Zachte materialen veilig voor baby's"
-        ],
-        "rating": 4.5,
-        "reviews": 89,
-        "badge": None,
-        "inStock": True,
-        "ageRange": "Vanaf 0 maanden",
-        "warranty": "14 dagen geld-terug-garantie",
-        "itemId": "KNUF_007",
-        "itemCategory": "Knuffels",
-        "itemCategory2": "Slaapknuffels",
-        "itemCategory3": "Wilde Dieren",
-        "itemVariant": "Olifant"
-    },
-    {
-        "id": 8,
-        "name": "Panda Droomvriend - Knuffel met Sterrenlicht",
-        "shortName": "Panda Projector",
-        "price": 54.95,
-        "originalPrice": 69.95,
-        "image": "https://i.imgur.com/Gx8BZWK.jpeg",
-        "gallery": [
-            "https://i.imgur.com/Gx8BZWK.jpeg"
-        ],
-        "description": "Een schattige panda met sterrenprojector voor een magische nacht.",
-        "features": [
-            "🌟 Sterrenprojectie in 3 kleuren",
-            "🎵 8 rustgevende slaapliedjes",
-            "🔇 White noise & natuurgeluiden",
-            "⏰ 30 minuten timer",
-            "🔋 USB oplaadbaar"
-        ],
-        "benefits": [
-            "Helpt je baby sneller in slaap te vallen",
-            "Creëert een rustgevende slaapomgeving",
-            "Perfect voor in de kinderkamer"
-        ],
-        "rating": 4.6,
-        "reviews": 72,
-        "badge": None,
-        "inStock": True,
-        "ageRange": "Vanaf 0 maanden",
-        "warranty": "14 dagen geld-terug-garantie",
-        "itemId": "KNUF_008",
-        "itemCategory": "Knuffels",
-        "itemCategory2": "Slaapknuffels",
-        "itemCategory3": "Wilde Dieren",
-        "itemVariant": "Panda"
-    },
-    {
-        "id": 9,
-        "name": "Konijn Slaapvriend - Roze Knuffel met Nachtlamp",
-        "shortName": "Konijn Projector",
-        "price": 54.95,
-        "originalPrice": 69.95,
-        "image": "https://i.imgur.com/ZxLbN3J.jpeg",
-        "gallery": [
-            "https://i.imgur.com/ZxLbN3J.jpeg"
-        ],
-        "description": "Een lief roze konijntje met sterrenprojector en zachte melodieën.",
-        "features": [
-            "🌟 Sterrenprojectie in 3 kleuren",
-            "🎵 8 rustgevende slaapliedjes",
-            "🔇 White noise & natuurgeluiden",
-            "⏰ 30 minuten timer",
-            "🔋 USB oplaadbaar"
-        ],
-        "benefits": [
-            "Helpt je baby sneller in slaap te vallen",
-            "Creëert een rustgevende slaapomgeving",
-            "Perfect voor kleine meisjes"
-        ],
-        "rating": 4.7,
-        "reviews": 95,
-        "badge": None,
-        "inStock": True,
-        "ageRange": "Vanaf 0 maanden",
-        "warranty": "14 dagen geld-terug-garantie",
-        "itemId": "KNUF_009",
-        "itemCategory": "Knuffels",
-        "itemCategory2": "Slaapknuffels",
-        "itemCategory3": "Boerderijdieren",
-        "itemVariant": "Konijn"
-    },
-    {
-        "id": 10,
-        "name": "Uil Nachtlicht - Wijze Knuffel met Projectie",
-        "shortName": "Uil Projector",
-        "price": 49.95,
-        "originalPrice": 64.95,
-        "image": "https://i.imgur.com/kOVMcQR.jpeg",
-        "gallery": [
-            "https://i.imgur.com/kOVMcQR.jpeg"
-        ],
-        "description": "Een wijze uil die over je kindje waakt met sterrenprojectie.",
-        "features": [
-            "🌟 Sterrenprojectie in 3 kleuren",
-            "🎵 8 rustgevende slaapliedjes",
-            "🔇 White noise & natuurgeluiden",
-            "⏰ 30 minuten timer",
-            "🔋 USB oplaadbaar"
-        ],
-        "benefits": [
-            "Helpt je baby sneller in slaap te vallen",
-            "Creëert een rustgevende slaapomgeving",
-            "Uniek uil design"
-        ],
-        "rating": 4.4,
-        "reviews": 58,
-        "badge": None,
-        "inStock": True,
-        "ageRange": "Vanaf 0 maanden",
-        "warranty": "14 dagen geld-terug-garantie",
-        "itemId": "KNUF_010",
-        "itemCategory": "Knuffels",
-        "itemCategory2": "Slaapknuffels",
-        "itemCategory3": "Vogels",
-        "itemVariant": "Uil"
-    },
-    {
-        "id": 11,
-        "name": "Beer Sterrenprojector - Klassieke Teddy met Licht",
-        "shortName": "Beer Projector",
-        "price": 54.95,
-        "originalPrice": 69.95,
-        "image": "https://i.imgur.com/m4lE3aR.jpeg",
-        "gallery": [
-            "https://i.imgur.com/m4lE3aR.jpeg"
-        ],
-        "description": "Een klassieke teddybeer met moderne sterrenprojector technologie.",
-        "features": [
-            "🌟 Sterrenprojectie in 3 kleuren",
-            "🎵 8 rustgevende slaapliedjes",
-            "🔇 White noise & natuurgeluiden",
-            "⏰ 30 minuten timer",
-            "🔋 USB oplaadbaar"
-        ],
-        "benefits": [
-            "Tijdloos teddybeer design",
-            "Modern met sterrenprojectie",
-            "Perfect cadeau voor babyshower"
-        ],
-        "rating": 4.5,
-        "reviews": 112,
-        "badge": None,
-        "inStock": False,
-        "ageRange": "Vanaf 0 maanden",
-        "warranty": "14 dagen geld-terug-garantie",
-        "itemId": "KNUF_011",
-        "itemCategory": "Knuffels",
-        "itemCategory2": "Slaapknuffels",
-        "itemCategory3": "Beren",
-        "itemVariant": "Klassiek"
-    }
-]
+# NOTE: Old imgur products removed (Feb 22, 2026)
+# Database already contains proper products with local images in /products/ folder
+INITIAL_PRODUCTS = []
 
 
 async def seed_products():
@@ -438,6 +90,41 @@ async def seed_products():
         logger.error(f"Error seeding products: {e}")
 
 
+def apply_image_overrides(product: dict) -> dict:
+    """
+    Apply image overrides to a product.
+    If image_override exists and is not empty, use it instead of the default image.
+    Same for gallery_overrides, macroImage, and dimensionsImage.
+    """
+    # Apply main image override
+    if product.get("image_override"):
+        product["image"] = product["image_override"]
+    
+    # Apply gallery overrides (merge with defaults if partial)
+    if product.get("gallery_overrides"):
+        overrides = product["gallery_overrides"]
+        default_gallery = product.get("gallery", [])
+        
+        # Build new gallery: use override if exists, else use default
+        new_gallery = []
+        max_len = max(len(overrides), len(default_gallery))
+        
+        for i in range(max_len):
+            if i < len(overrides) and overrides[i]:
+                # Override exists for this position
+                new_gallery.append(overrides[i])
+            elif i < len(default_gallery):
+                # Use default
+                new_gallery.append(default_gallery[i])
+        
+        product["gallery"] = new_gallery
+    
+    # macroImage and dimensionsImage are stored directly - no override logic needed
+    # They are explicit fields that admin can set directly
+    
+    return product
+
+
 @router.get("")
 async def get_all_products():
     """Get all products"""
@@ -446,6 +133,8 @@ async def get_all_products():
     
     try:
         products = await db.products.find({}, {"_id": 0}).to_list(length=100)
+        # Apply image overrides to all products
+        products = [apply_image_overrides(p) for p in products]
         return products
     except Exception as e:
         logger.error(f"Error fetching products: {e}")
@@ -453,7 +142,7 @@ async def get_all_products():
 
 
 @router.get("/{product_id}")
-async def get_product(product_id: int):
+async def get_product(product_id: str):
     """Get a single product by ID"""
     if db is None:
         raise HTTPException(status_code=500, detail="Database not configured")
@@ -462,6 +151,8 @@ async def get_product(product_id: int):
         product = await db.products.find_one({"id": product_id}, {"_id": 0})
         if not product:
             raise HTTPException(status_code=404, detail="Product not found")
+        # Apply image overrides
+        product = apply_image_overrides(product)
         return product
     except HTTPException:
         raise
@@ -495,7 +186,7 @@ async def create_product(product: dict):
 
 
 @router.put("/{product_id}")
-async def update_product(product_id: int, updates: dict):
+async def update_product(product_id: str, updates: dict):
     """Update a product (admin only)"""
     if db is None:
         raise HTTPException(status_code=500, detail="Database not configured")
@@ -525,7 +216,7 @@ async def update_product(product_id: int, updates: dict):
 
 
 @router.delete("/{product_id}")
-async def delete_product(product_id: int):
+async def delete_product(product_id: str):
     """Delete a product (admin only)"""
     if db is None:
         raise HTTPException(status_code=500, detail="Database not configured")
@@ -546,7 +237,7 @@ async def delete_product(product_id: int):
 
 
 @router.put("/{product_id}/advanced")
-async def update_product_advanced(product_id: int, updates: dict):
+async def update_product_advanced(product_id: str, updates: dict):
     """
     Update product with advanced customizations (images, sections, etc.)
     For the Advanced Product Editor
@@ -581,7 +272,7 @@ async def update_product_advanced(product_id: int, updates: dict):
 
 
 @router.get("/{product_id}/advanced")
-async def get_product_advanced(product_id: int):
+async def get_product_advanced(product_id: str):
     """Get product with all advanced customizations"""
     if db is None:
         raise HTTPException(status_code=500, detail="Database not configured")
@@ -598,4 +289,415 @@ async def get_product_advanced(product_id: int):
     except Exception as e:
         logger.error(f"Error fetching product advanced {product_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+@router.put("/{product_id}/image-override")
+async def update_product_image_override(product_id: str, updates: dict):
+    """
+    Update product image overrides.
+    Supports:
+    - image_override: string URL to override main product image
+    - gallery_overrides: array of URLs to override gallery images (use null/empty to keep default)
+    
+    Set to null or empty string to clear override and use default image.
+    """
+    return await _do_update_image_override(product_id, updates)
+
+
+@router.get("/{product_id}/set-image-override")
+async def set_product_image_override_get(
+    product_id: str, 
+    image: str = None,
+    gallery: str = None,
+    clear: bool = False
+):
+    """
+    GET-based image override for CRA proxy compatibility.
+    - image: URL encoded main image override URL
+    - gallery: Comma-separated gallery override URLs (use 'null' for no override at position)
+    - clear: If true, clear all overrides
+    """
+    updates = {}
+    
+    if clear:
+        updates["image_override"] = ""
+        updates["gallery_overrides"] = []
+    else:
+        if image is not None:
+            updates["image_override"] = image
+        if gallery is not None:
+            # Parse comma-separated, handle 'null' as None
+            gallery_list = [
+                None if g.strip().lower() == 'null' else g.strip() 
+                for g in gallery.split(',')
+            ]
+            updates["gallery_overrides"] = gallery_list
+    
+    return await _do_update_image_override(product_id, updates)
+
+
+async def _do_update_image_override(product_id: str, updates: dict):
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database not configured")
+    
+    try:
+        # Check product exists
+        product = await db.products.find_one({"id": product_id})
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+        
+        # Prepare update
+        update_fields = {"updated_at": datetime.now(timezone.utc)}
+        
+        # Handle main image override
+        if "image_override" in updates:
+            override = updates["image_override"]
+            if override and override.strip():
+                update_fields["image_override"] = override.strip()
+            else:
+                # Clear override - unset the field
+                await db.products.update_one(
+                    {"id": product_id},
+                    {"$unset": {"image_override": ""}}
+                )
+        
+        # Handle gallery overrides
+        if "gallery_overrides" in updates:
+            overrides = updates["gallery_overrides"]
+            if overrides and any(o for o in overrides if o):
+                # Clean the array - keep structure but allow nulls
+                update_fields["gallery_overrides"] = [
+                    o.strip() if o and isinstance(o, str) else None 
+                    for o in overrides
+                ]
+            else:
+                # Clear all gallery overrides
+                await db.products.update_one(
+                    {"id": product_id},
+                    {"$unset": {"gallery_overrides": ""}}
+                )
+        
+        # Apply updates
+        if len(update_fields) > 1:  # More than just updated_at
+            await db.products.update_one(
+                {"id": product_id},
+                {"$set": update_fields}
+            )
+        
+        # Return updated product with raw data (no overrides applied - for admin)
+        product = await db.products.find_one({"id": product_id}, {"_id": 0})
+        logger.info(f"Product {product_id} image overrides updated")
+        
+        return {
+            "success": True,
+            "product": product,
+            "message": "Image overrides updated"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating image overrides for product {product_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/{product_id}/image-override")
+async def clear_product_image_overrides(product_id: str):
+    """Clear all image overrides for a product, reverting to default images"""
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database not configured")
+    
+    try:
+        # Check product exists
+        product = await db.products.find_one({"id": product_id})
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+        
+        # Clear all overrides
+        await db.products.update_one(
+            {"id": product_id},
+            {
+                "$unset": {
+                    "image_override": "",
+                    "gallery_overrides": ""
+                },
+                "$set": {
+                    "updated_at": datetime.now(timezone.utc)
+                }
+            }
+        )
+        
+        # Return updated product
+        product = await db.products.find_one({"id": product_id}, {"_id": 0})
+        logger.info(f"Product {product_id} image overrides cleared")
+        
+        return {
+            "success": True,
+            "product": product,
+            "message": "All image overrides cleared - using default images"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error clearing image overrides for product {product_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{product_id}/image-info")
+async def get_product_image_info(product_id: str):
+    """
+    Get detailed image information for a product including:
+    - Default images (original)
+    - Override images (if set)
+    - Active images (what's currently shown on frontend)
+    """
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database not configured")
+    
+    try:
+        # Get raw product data without applying overrides
+        product = await db.products.find_one({"id": product_id}, {"_id": 0})
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+        
+        # Build response with clear separation
+        default_image = product.get("image", "")
+        default_gallery = product.get("gallery", [])
+        
+        image_override = product.get("image_override")
+        gallery_overrides = product.get("gallery_overrides", [])
+        
+        # Calculate active images
+        active_image = image_override if image_override else default_image
+        
+        active_gallery = []
+        max_len = max(len(gallery_overrides) if gallery_overrides else 0, len(default_gallery))
+        for i in range(max_len):
+            if gallery_overrides and i < len(gallery_overrides) and gallery_overrides[i]:
+                active_gallery.append(gallery_overrides[i])
+            elif i < len(default_gallery):
+                active_gallery.append(default_gallery[i])
+        
+        return {
+            "product_id": product_id,
+            "product_name": product.get("shortName", product.get("name", "")),
+            "default": {
+                "image": default_image,
+                "gallery": default_gallery
+            },
+            "overrides": {
+                "image": image_override,
+                "gallery": gallery_overrides if gallery_overrides else []
+            },
+            "active": {
+                "image": active_image,
+                "gallery": active_gallery
+            },
+            "has_overrides": bool(image_override or (gallery_overrides and any(gallery_overrides)))
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting image info for product {product_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============== PRODUCT IMAGE UPLOAD ==============
+
+def get_product_folder(product_name: str) -> str:
+    """Generate safe folder name from product name"""
+    # Convert to lowercase and replace spaces/special chars
+    safe_name = product_name.lower().strip()
+    safe_name = safe_name.replace(" ", "-").replace("–", "-")
+    # Remove non-alphanumeric except dashes
+    safe_name = "".join(c for c in safe_name if c.isalnum() or c == "-")
+    # Remove multiple dashes
+    while "--" in safe_name:
+        safe_name = safe_name.replace("--", "-")
+    return safe_name
+
+
+@router.post("/{product_id}/upload-image")
+async def upload_product_image(
+    product_id: str,
+    file: UploadFile = File(...),
+    image_type: str = Form("main")  # main, dimensions, features, gallery
+):
+    """
+    Upload a product image
+    image_type: 'main' | 'dimensions' | 'features' | 'gallery'
+    """
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database not configured")
+    
+    # Validate file type
+    allowed_types = ["image/jpeg", "image/png", "image/webp", "image/gif"]
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Alleen JPEG, PNG, WebP en GIF zijn toegestaan")
+    
+    # Read file content
+    contents = await file.read()
+    
+    # Validate file size (max 10MB)
+    if len(contents) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Bestand is te groot (max 10MB)")
+    
+    # Get product
+    product = await db.products.find_one({"id": product_id}, {"_id": 0})
+    if not product:
+        raise HTTPException(status_code=404, detail="Product niet gevonden")
+    
+    try:
+        # Create folder based on product name
+        product_folder = get_product_folder(product.get("shortName", f"product-{product_id}"))
+        upload_dir = f"/app/frontend/public/products/{product_folder}"
+        os.makedirs(upload_dir, exist_ok=True)
+        
+        # Generate filename based on type
+        file_ext = file.filename.split(".")[-1] if "." in file.filename else "jpg"
+        
+        if image_type == "main":
+            filename = f"{product_folder}-main.{file_ext}"
+        elif image_type == "dimensions":
+            filename = f"{product_folder}-dimensions.{file_ext}"
+        elif image_type == "features":
+            filename = f"{product_folder}-features.{file_ext}"
+        else:  # gallery
+            filename = f"{product_folder}-gallery-{uuid.uuid4().hex[:8]}.{file_ext}"
+        
+        # Save file
+        file_path = os.path.join(upload_dir, filename)
+        with open(file_path, "wb") as f:
+            f.write(contents)
+        
+        # Generate URL
+        image_url = f"/products/{product_folder}/{filename}"
+        
+        # Update database based on image type
+        update_data = {"updatedAt": datetime.now(timezone.utc).isoformat()}
+        
+        if image_type == "main":
+            update_data["image"] = image_url
+        elif image_type == "dimensions":
+            update_data["dimensionsImage"] = image_url
+        elif image_type == "features":
+            update_data["macroImage"] = image_url
+        else:  # gallery - append to gallery array
+            await db.products.update_one(
+                {"id": product_id},
+                {"$push": {"gallery": image_url}, "$set": {"updatedAt": update_data["updatedAt"]}}
+            )
+            logger.info(f"Gallery image added for product {product_id}: {image_url}")
+            return {"success": True, "image_url": image_url, "type": image_type}
+        
+        # Update product
+        await db.products.update_one({"id": product_id}, {"$set": update_data})
+        
+        logger.info(f"Product image uploaded for {product_id}: {image_url} (type: {image_type})")
+        return {"success": True, "image_url": image_url, "type": image_type}
+        
+    except Exception as e:
+        logger.error(f"Error uploading image for product {product_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/{product_id}/gallery/{image_index}")
+async def remove_gallery_image(product_id: str, image_index: int):
+    """Remove an image from the product gallery by index"""
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database not configured")
+    
+    product = await db.products.find_one({"id": product_id}, {"_id": 0})
+    if not product:
+        raise HTTPException(status_code=404, detail="Product niet gevonden")
+    
+    gallery = product.get("gallery", [])
+    if image_index < 0 or image_index >= len(gallery):
+        raise HTTPException(status_code=400, detail="Ongeldige gallery index")
+    
+    try:
+        # Remove the image at the specified index
+        gallery.pop(image_index)
+        
+        await db.products.update_one(
+            {"id": product_id},
+            {"$set": {"gallery": gallery, "updatedAt": datetime.now(timezone.utc).isoformat()}}
+        )
+        
+        return {"success": True, "message": f"Afbeelding {image_index} verwijderd uit gallery"}
+        
+    except Exception as e:
+        logger.error(f"Error removing gallery image: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/create")
+async def create_new_product(product: ProductCreate):
+    """Create a new product"""
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database not configured")
+    
+    try:
+        # Get the next available ID
+        last_product = await db.products.find_one(sort=[("id", -1)])
+        new_id = (last_product.get("id", 0) + 1) if last_product else 1
+        
+        # Create product document
+        now = datetime.now(timezone.utc).isoformat()
+        product_doc = {
+            "id": new_id,
+            **product.dict(),
+            "image": "/products/placeholder.png",  # Will be updated when image is uploaded
+            "gallery": [],
+            "rating": 0,
+            "reviews": 0,
+            "createdAt": now,
+            "updatedAt": now,
+            "visible": True
+        }
+        
+        await db.products.insert_one(product_doc)
+        
+        # Remove MongoDB _id for response
+        if "_id" in product_doc:
+            del product_doc["_id"]
+        
+        logger.info(f"New product created: {product.shortName} (ID: {new_id})")
+        return {"success": True, "product": product_doc}
+        
+    except Exception as e:
+        logger.error(f"Error creating product: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/{product_id}/full")
+async def update_product_full(product_id: str, product: ProductUpdate):
+    """Full product update with all fields"""
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database not configured")
+    
+    existing = await db.products.find_one({"id": product_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Product niet gevonden")
+    
+    try:
+        # Build update dict only with non-None values
+        update_data = {k: v for k, v in product.dict().items() if v is not None}
+        update_data["updatedAt"] = datetime.now(timezone.utc).isoformat()
+        
+        await db.products.update_one({"id": product_id}, {"$set": update_data})
+        
+        # Get updated product
+        updated = await db.products.find_one({"id": product_id}, {"_id": 0})
+        
+        logger.info(f"Product {product_id} fully updated")
+        return {"success": True, "product": updated}
+        
+    except Exception as e:
+        logger.error(f"Error updating product {product_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 

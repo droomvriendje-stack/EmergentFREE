@@ -39,6 +39,7 @@ class UserReviewSubmit(BaseModel):
     rating: int
     title: str
     text: str
+    photo_url: Optional[str] = None  # URL of uploaded photo
 
 class ReviewResponse(BaseModel):
     id: str
@@ -151,6 +152,7 @@ async def submit_user_review(review: UserReviewSubmit):
         "text": review.text.strip(),
         "verified": False,  # User-submitted reviews are not verified by default
         "avatar": get_default_avatar(review.name),
+        "photo_url": review.photo_url,  # Customer uploaded photo
         "date": "vandaag",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "source": "user_submitted",
@@ -165,6 +167,41 @@ async def submit_user_review(review: UserReviewSubmit):
     
     logger.info(f"User review submitted for product {review.product_name} by {review.name}")
     return {"success": True, "message": "Review succesvol ingediend!", "review": review_doc}
+
+
+@router.post("/upload-photo")
+async def upload_review_photo(file: UploadFile = File(...)):
+    """Upload a photo for a review"""
+    import os
+    import base64
+    
+    # Validate file type
+    allowed_types = ["image/jpeg", "image/png", "image/webp", "image/gif"]
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Alleen JPEG, PNG, WebP en GIF zijn toegestaan")
+    
+    # Validate file size (max 5MB)
+    contents = await file.read()
+    if len(contents) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Bestand is te groot (max 5MB)")
+    
+    # Generate unique filename
+    file_ext = file.filename.split(".")[-1] if "." in file.filename else "jpg"
+    unique_filename = f"review_{uuid.uuid4().hex[:12]}.{file_ext}"
+    
+    # Save to static directory
+    upload_dir = "/app/frontend/public/uploads/reviews"
+    os.makedirs(upload_dir, exist_ok=True)
+    
+    file_path = os.path.join(upload_dir, unique_filename)
+    with open(file_path, "wb") as f:
+        f.write(contents)
+    
+    # Return the URL
+    photo_url = f"/uploads/reviews/{unique_filename}"
+    
+    logger.info(f"Review photo uploaded: {photo_url}")
+    return {"success": True, "photo_url": photo_url, "filename": unique_filename}
 
 
 @router.patch("/{review_id}/visibility")

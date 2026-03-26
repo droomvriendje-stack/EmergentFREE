@@ -2,15 +2,18 @@ from fastapi import FastAPI, APIRouter, HTTPException, Request, Depends
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+from supabase import create_client, Client as SupabaseClient
 import os
 import logging
 import asyncio
+import json
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional
 import uuid
 from datetime import datetime, timezone, timedelta
 from mollie.api.client import Client as MollieClient
+import requests as http_requests
 from bson import ObjectId
 import smtplib
 import ssl
@@ -38,7 +41,7 @@ if env_path.exists():
 else:
     logger.warning(f"No .env file found at {env_path}, using system environment variables only")
 
-# MongoDB connection - Support both local and Atlas MongoDB
+# MongoDB connection - Support both local and Atlas MongoDB (LEGACY - kept for backwards compatibility)
 mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
 db_name = os.environ.get('DB_NAME', 'droomvriendje')
 
@@ -61,6 +64,27 @@ except ImportError:
 except Exception as e:
     logger.error(f"MongoDB connection error: {e}")
     raise
+
+# ============== SUPABASE CONNECTION ==============
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://qoykbhocordugtbvpvsl.supabase.co")
+SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
+
+# Use Supabase as primary database (set to True to enable)
+USE_SUPABASE = os.environ.get("USE_SUPABASE", "true").lower() == "true"
+
+supabase_client: SupabaseClient = None
+if SUPABASE_SERVICE_KEY or SUPABASE_ANON_KEY:
+    try:
+        api_key = SUPABASE_SERVICE_KEY or SUPABASE_ANON_KEY
+        supabase_client = create_client(SUPABASE_URL, api_key)
+        logger.info(f"✅ Supabase connected to: {SUPABASE_URL}")
+    except Exception as e:
+        logger.error(f"❌ Supabase connection error: {e}")
+        USE_SUPABASE = False
+else:
+    logger.warning("⚠️ Supabase keys not configured, using MongoDB")
+    USE_SUPABASE = False
 
 # Mollie configuration - read fresh from environment each time
 # This ensures Kubernetes environment variables are always used
@@ -138,216 +162,190 @@ api_router = APIRouter(prefix="/api")
 
 # Import and setup modular routes
 from routes import products as products_route
+from routes import products_supabase as products_supabase_route
+from routes import orders_supabase as orders_supabase_route
+from routes import reviews_supabase as reviews_supabase_route
+from routes import email_templates as email_templates_route
 from routes import discount_codes as discount_codes_route
 from routes import reviews as reviews_route
+from routes import uploads as uploads_route
+from routes import marketing as marketing_route
+from routes import database_info as database_info_route
+from routes import gift_cards_supabase as gift_cards_supabase_route
+from routes import csv_import as csv_import_route
 
-# Set database for routes
-products_route.set_database(db)
+# Configure routes based on database choice
+if USE_SUPABASE and supabase_client:
+    logger.info("🚀 Using SUPABASE for products")
+    products_supabase_route.set_supabase_client(supabase_client)
+    api_router.include_router(products_supabase_route.router)
+    
+    # Also use Supabase for orders
+    logger.info("🚀 Using SUPABASE for orders")
+    orders_supabase_route.set_supabase_client(supabase_client)
+    api_router.include_router(orders_supabase_route.router)
+    
+    # Also use Supabase for reviews
+    logger.info("🚀 Using SUPABASE for reviews")
+    reviews_supabase_route.set_supabase_client(supabase_client)
+    api_router.include_router(reviews_supabase_route.router)
+    
+    # Email templates (Supabase only)
+    logger.info("🚀 Using SUPABASE for email templates")
+    email_templates_route.set_supabase_client(supabase_client)
+    api_router.include_router(email_templates_route.router)
+    
+    # Gift cards (Supabase)
+    logger.info("🚀 Using SUPABASE for gift cards")
+    gift_cards_supabase_route.set_supabase_client(supabase_client)
+    api_router.include_router(gift_cards_supabase_route.router)
+else:
+    logger.info("🚀 Using MONGODB for products")
+    products_route.set_database(db)
+    api_router.include_router(products_route.router)
+    # Reviews via MongoDB
+    reviews_route.set_database(db)
+    api_router.include_router(reviews_route.router)
+
+# Set database for other routes (still using MongoDB for non-migrated routes)
 discount_codes_route.set_database(db)
-reviews_route.set_database(db)
+uploads_route.set_database(db)
+marketing_route.set_database(db)
+database_info_route.set_database(db)
+csv_import_route.set_db(db)
+csv_import_route.set_supabase(supabase_client)
 
-# Include modular routers
-api_router.include_router(products_route.router)
+# Set site URL for unsubscribe links - read from frontend env
+try:
+    with open('/app/frontend/.env', 'r') as f:
+        for line in f:
+            if line.startswith('REACT_APP_BACKEND_URL='):
+                site_url = line.strip().split('=', 1)[1]
+                csv_import_route.set_site_url(site_url)
+                break
+except Exception:
+    pass
+
+# Include other routers
 api_router.include_router(discount_codes_route.router)
-api_router.include_router(reviews_route.router)
+api_router.include_router(uploads_route.router)
+api_router.include_router(csv_import_route.router)
+
+# Include marketing router (already has /api prefix in route)
+app.include_router(marketing_route.router)
+
+# Include database info router
+app.include_router(database_info_route.router)
 
 # ============== GOOGLE SHOPPING FEED CONSTANTS ==============
 SHOP_URL = os.environ.get('SHOP_URL', 'https://droomvriendjes.nl')
 MERCHANT_CENTER_ID = os.environ.get('GOOGLE_MERCHANT_CENTER_ID', '5713316340')
 
 # Product data for Google Shopping Feed
-PRODUCTS_DATA = [
-    {
-        "id": "KNUF_001",
-        "title": "Baby Slaapmaatje Leeuw - Projector Nachtlamp met White Noise",
-        "description": "Projector nachtlamp met rustgevende geluiden. Perfect voor een betere nachtrust.",
-        "link": "/product/1",
-        "image_link": "https://i.imgur.com/E4g3eOy.jpeg",
-        "additional_image_links": ["https://i.imgur.com/zYLuTAg.jpeg", "https://i.imgur.com/WfHQKKr.jpeg"],
-        "availability": "in_stock",
-        "price": "49.95 EUR",
-        "brand": "Droomvriendjes",
-        "condition": "new",
-        "google_product_category": "588 > 4186",
-        "product_type": "Knuffels > Slaapknuffels > Wilde Dieren",
-        "identifier_exists": "no",
-        "age_group": "infant",
-        "color": "Geel/Bruin",
-        "material": "Pluche",
-        "shipping_weight": "0.5 kg"
-    },
-    {
-        "id": "KNUF_002",
-        "title": "Baby Nachtlamp Schaap - Slaapknuffel met Sterrenprojector",
-        "description": "Slaapknuffel met projector en white noise. Helpt je kind tot rust te komen.",
-        "link": "/product/2",
-        "image_link": "https://i.imgur.com/vYpeb4c.jpeg",
-        "additional_image_links": ["https://i.imgur.com/62h7jyd.jpeg", "https://i.imgur.com/JxKouOL.jpeg"],
-        "availability": "in_stock",
-        "price": "59.95 EUR",
-        "brand": "Droomvriendjes",
-        "condition": "new",
-        "google_product_category": "588 > 4186",
-        "product_type": "Knuffels > Slaapknuffels > Boerderijdieren",
-        "identifier_exists": "no",
-        "age_group": "infant",
-        "color": "Wit/Crème",
-        "material": "Pluche",
-        "shipping_weight": "0.5 kg"
-    },
-    {
-        "id": "KNUF_003",
-        "title": "Teddy Projector Knuffel - Bruine Beer met Nachtlicht",
-        "description": "Bruine teddy met nachtlicht en rustgevende geluiden. Voor een rustige nachtrust.",
-        "link": "/product/3",
-        "image_link": "https://i.imgur.com/jM6J4oV.jpeg",
-        "additional_image_links": ["https://i.imgur.com/bMpTi4F.jpeg", "https://i.imgur.com/LuZnyJN.jpeg"],
-        "availability": "in_stock",
-        "price": "59.95 EUR",
-        "brand": "Droomvriendjes",
-        "condition": "new",
-        "google_product_category": "588 > 4186",
-        "product_type": "Knuffels > Slaapknuffels > Beren",
-        "identifier_exists": "no",
-        "age_group": "infant",
-        "color": "Bruin",
-        "material": "Pluche",
-        "shipping_weight": "0.5 kg"
-    },
-    {
-        "id": "KNUF_004",
-        "title": "Pinguïn Nachtlampje - Slaapknuffel met Projectie",
-        "description": "Schattige pinguïn met sterrenprojector en rustgevende geluiden.",
-        "link": "/product/4",
-        "image_link": "https://i.imgur.com/sYVb8K4.jpeg",
-        "additional_image_links": ["https://i.imgur.com/RqYk1oe.jpeg"],
-        "availability": "in_stock",
-        "price": "59.95 EUR",
-        "brand": "Droomvriendjes",
-        "condition": "new",
-        "google_product_category": "588 > 4186",
-        "product_type": "Knuffels > Slaapknuffels > Pooldieren",
-        "identifier_exists": "no",
-        "age_group": "infant",
-        "color": "Blauw/Wit",
-        "material": "Pluche",
-        "shipping_weight": "0.5 kg"
-    },
-    {
-        "id": "KNUF_005",
-        "title": "Dinosaurus Slaapknuffel - Stoere Dino met Nachtlamp",
-        "description": "Stoere dinosaurus met nachtlamp en white noise. Perfect voor avonturiers!",
-        "link": "/product/5",
-        "image_link": "https://i.imgur.com/z4cyllw.jpeg",
-        "additional_image_links": ["https://i.imgur.com/mWJSBxI.jpeg"],
-        "availability": "in_stock",
-        "price": "59.95 EUR",
-        "brand": "Droomvriendjes",
-        "condition": "new",
-        "google_product_category": "588 > 4186",
-        "product_type": "Knuffels > Slaapknuffels > Fantasiedieren",
-        "identifier_exists": "no",
-        "age_group": "infant",
-        "color": "Groen",
-        "material": "Pluche",
-        "shipping_weight": "0.5 kg"
-    },
-    {
-        "id": "KNUF_006",
-        "title": "Slaapknuffel Duo Schaap & Teddy - Voordeelset",
-        "description": "Twee schattige slaapknuffels met nachtlampjes. Perfect voor broertjes en zusjes!",
-        "link": "/product/6",
-        "image_link": "https://i.imgur.com/4blLAM7.jpeg",
-        "additional_image_links": ["https://i.imgur.com/1JbBGgT.jpeg"],
-        "availability": "in_stock",
-        "price": "89.95 EUR",
-        "brand": "Droomvriendjes",
-        "condition": "new",
-        "google_product_category": "588 > 4186",
-        "product_type": "Knuffels > Voordeelsets > Duo Sets",
-        "identifier_exists": "no",
-        "age_group": "infant",
-        "color": "Wit/Bruin",
-        "material": "Pluche",
-        "shipping_weight": "1.0 kg"
-    },
-    {
-        "id": "KNUF_007",
-        "title": "Beer Sterrenprojector Nachtlamp - Slaapknuffel",
-        "description": "Schattige beer met sterrenprojector en rustgevende slaapgeluiden.",
-        "link": "/product/7",
-        "image_link": "https://i.imgur.com/q2c7zsP.jpeg",
-        "additional_image_links": ["https://i.imgur.com/xyXHy7f.jpeg"],
-        "availability": "in_stock",
-        "price": "59.95 EUR",
-        "brand": "Droomvriendjes",
-        "condition": "new",
-        "google_product_category": "588 > 4186",
-        "product_type": "Knuffels > Slaapknuffels > Beren",
-        "identifier_exists": "no",
-        "age_group": "infant",
-        "color": "Beige",
-        "material": "Pluche",
-        "shipping_weight": "0.4 kg"
-    },
-    {
-        "id": "KNUF_008",
-        "title": "Schaap Knuffel Nachtlampje - Liggend Schaapje",
-        "description": "Liggend schaapje met kalmerend licht en rustgevende geluiden. Super zacht!",
-        "link": "/product/8",
-        "image_link": "https://i.imgur.com/8mKVYOY.jpeg",
-        "additional_image_links": ["https://i.imgur.com/N1vjMHQ.jpeg"],
-        "availability": "in_stock",
-        "price": "59.95 EUR",
-        "brand": "Droomvriendjes",
-        "condition": "new",
-        "google_product_category": "588 > 4186",
-        "product_type": "Knuffels > Slaapknuffels > Boerderijdieren",
-        "identifier_exists": "no",
-        "age_group": "infant",
-        "color": "Wit/Crème",
-        "material": "Pluche",
-        "shipping_weight": "0.5 kg"
-    },
-    {
-        "id": "KNUF_009",
-        "title": "Kalmerende Eenhoorn Knuffel - Magische Unicorn",
-        "description": "Magische eenhoorn met kalmerend licht. De perfecte slaaphulp!",
-        "link": "/product/9",
-        "image_link": "https://i.imgur.com/KRNfDsV.jpeg",
-        "additional_image_links": ["https://i.imgur.com/x4PTZXD.png"],
-        "availability": "in_stock",
-        "price": "59.95 EUR",
-        "brand": "Droomvriendjes",
-        "condition": "new",
-        "google_product_category": "588 > 4186",
-        "product_type": "Knuffels > Slaapknuffels > Fantasiedieren",
-        "identifier_exists": "no",
-        "age_group": "infant",
-        "color": "Roze/Regenboog",
-        "material": "Pluche",
-        "shipping_weight": "0.5 kg"
-    },
-    {
-        "id": "KNUF_011",
-        "title": "Panda Projector Knuffel - Slaapknuffel met Sterrenhemel",
-        "description": "Schattige panda met rustgevende muziek en nachtlicht. Perfect voor rustige nachtjes!",
-        "link": "/product/11",
-        "image_link": "https://i.imgur.com/fhVs30E.jpeg",
-        "additional_image_links": ["https://i.imgur.com/COWpWna.jpeg"],
-        "availability": "in_stock",
-        "price": "49.95 EUR",
-        "brand": "Droomvriendjes",
-        "condition": "new",
-        "google_product_category": "588 > 4186",
-        "product_type": "Knuffels > Slaapknuffels > Wilde Dieren",
-        "identifier_exists": "no",
-        "age_group": "infant",
-        "color": "Zwart/Wit",
-        "material": "Pluche",
-        "shipping_weight": "0.5 kg"
-    }
-]
+# NOTE: Old hardcoded products removed (Feb 19, 2026)
+# Google Merchant Feed now uses products from MongoDB database dynamically
+# This ensures the feed always shows current products
+
+async def get_products_for_feed():
+    """
+    Fetch all products from database and format them for Google Shopping feed
+    Supports both Supabase and MongoDB
+    """
+    try:
+        products = []
+        
+        if USE_SUPABASE and supabase_client:
+            # Fetch from Supabase
+            result = supabase_client.table("products").select("*").execute()
+            raw_products = result.data or []
+            
+            # Convert snake_case to camelCase for compatibility
+            for p in raw_products:
+                # Parse JSON fields
+                gallery = p.get('gallery', '[]')
+                if isinstance(gallery, str):
+                    try:
+                        gallery = json.loads(gallery)
+                    except:
+                        gallery = []
+                
+                products.append({
+                    'id': p.get('id'),
+                    'name': p.get('name'),
+                    'sku': p.get('sku'),
+                    'itemId': p.get('item_id'),
+                    'price': p.get('price'),
+                    'originalPrice': p.get('original_price'),
+                    'image': p.get('image'),
+                    'gallery': gallery,
+                    'description': p.get('description'),
+                    'inStock': p.get('in_stock', True),
+                    'itemCategory': p.get('item_category', 'Knuffels'),
+                    'itemCategory2': p.get('item_category2', 'Slaapknuffels'),
+                    'itemCategory3': p.get('item_category3', 'Baby'),
+                })
+        else:
+            # Fetch from MongoDB
+            products = await db.products.find({}, {"_id": 0}).to_list(length=100)
+        
+        # Format products for Google Shopping feed
+        formatted_products = []
+        for product in products:
+            # Extract gallery images (handle both string and object format)
+            gallery = product.get('gallery', [product.get('image', '')])
+            if not gallery:
+                gallery = [product.get('image', '')]
+            
+            # Get main image
+            main_image = gallery[0] if gallery else product.get('image', '')
+            if isinstance(main_image, dict):
+                main_image = main_image.get('url', '')
+            
+            # Get additional images (rest of gallery)
+            additional_images = []
+            for img in gallery[1:]:
+                if isinstance(img, str):
+                    additional_images.append(img)
+                elif isinstance(img, dict):
+                    additional_images.append(img.get('url', ''))
+            
+            # Determine product category from existing data
+            item_category = product.get('itemCategory', 'Knuffels')
+            item_category2 = product.get('itemCategory2', 'Slaapknuffels')
+            item_category3 = product.get('itemCategory3', 'Baby')
+            product_type = f"{item_category} > {item_category2} > {item_category3}"
+            
+            # Format product for feed
+            formatted_product = {
+                "id": product.get('sku', product.get('itemId', f"KNUF_{product.get('id', '')}")),
+                "title": product.get('name', ''),
+                "description": product.get('description', '')[:500],  # Google limit
+                "link": f"/product/{product.get('id')}",
+                "image_link": main_image,
+                "additional_image_links": additional_images,
+                "availability": "in_stock" if product.get('inStock', True) else "out_of_stock",
+                "price": f"{product.get('price', 0):.2f} EUR",
+                "brand": "Droomvriendjes",
+                "condition": "new",
+                "google_product_category": "588 > 4186",  # Toys & Games > Toys > Baby & Toddler Toys
+                "product_type": product_type,
+                "identifier_exists": "no",
+                "age_group": "infant",
+                "color": "Multicolor",  # Could be enhanced with actual product color
+                "material": "Pluche",
+                "shipping_weight": "0.5 kg"
+            }
+            
+            # Add sale price if original price exists
+            if product.get('originalPrice') and product.get('originalPrice') > product.get('price', 0):
+                formatted_product["sale_price"] = f"{product.get('price', 0):.2f} EUR"
+            
+            formatted_products.append(formatted_product)
+        
+        return formatted_products
+    except Exception as e:
+        logger.error(f"Error fetching products for feed: {e}")
+        return []
 
 
 # ============== HEALTH CHECK ENDPOINT (Required for Kubernetes) ==============
@@ -401,6 +399,10 @@ def send_email(to_email: str, subject: str, html_content: str, text_content: str
     except Exception as e:
         logger.error(f"❌ EMAIL FAILED: To={to_email}, Subject={subject}, Error={str(e)}")
         return False
+
+
+# Set email sender for CSV import route
+csv_import_route.set_email_sender(send_email)
 
 
 def send_contact_form_email(contact_data: dict):
@@ -884,7 +886,7 @@ class CartItem(BaseModel):
     quantity: int
 
 class CheckoutStartedCreate(BaseModel):
-    customer_email: str
+    customer_email: Optional[str] = None  # Made optional - email removed from cart sidebar
     cart_items: List[CartItem]
     total_amount: float
     session_id: Optional[str] = None
@@ -1001,6 +1003,150 @@ async def submit_contact_form(contact: ContactFormCreate):
         raise HTTPException(status_code=500, detail=f"Er ging iets mis: {str(e)}")
 
 
+@api_router.get("/address/lookup")
+async def address_lookup(postcode: str, huisnummer: str = ""):
+    """Lookup Dutch/Belgian address via PDOK (NL) or Nominatim (BE) API"""
+    try:
+        pc = postcode.strip().upper().replace(" ", "")
+        if len(pc) < 4:
+            return {"found": False, "message": "Voer een geldige postcode in"}
+
+        # Detect country: NL postcodes = 4 digits + 2 letters, BE = 4 digits only
+        is_belgian = pc.isdigit() and len(pc) == 4
+        is_dutch = len(pc) == 6 and pc[:4].isdigit() and pc[4:].isalpha()
+
+        if is_dutch or not is_belgian:
+            # Try PDOK (Netherlands)
+            query = pc
+            if huisnummer.strip():
+                query = f"{pc} {huisnummer.strip()}"
+            r = http_requests.get(
+                "https://api.pdok.nl/bzk/locatieserver/search/v3_1/free",
+                params={"q": query, "rows": 1, "fq": "type:adres"},
+                timeout=5
+            )
+            data = r.json()
+            docs = data.get("response", {}).get("docs", [])
+            if docs:
+                doc = docs[0]
+                return {
+                    "found": True,
+                    "straat": doc.get("straatnaam", ""),
+                    "stad": doc.get("woonplaatsnaam", ""),
+                    "postcode": doc.get("postcode", pc),
+                    "land": "NL"
+                }
+            # Fallback to postcode-only
+            r2 = http_requests.get(
+                "https://api.pdok.nl/bzk/locatieserver/search/v3_1/free",
+                params={"q": pc, "rows": 1, "fq": "type:postcode"},
+                timeout=5
+            )
+            data2 = r2.json()
+            docs2 = data2.get("response", {}).get("docs", [])
+            if docs2:
+                doc = docs2[0]
+                return {
+                    "found": True,
+                    "straat": doc.get("straatnaam", ""),
+                    "stad": doc.get("woonplaatsnaam", ""),
+                    "postcode": doc.get("postcode", pc),
+                    "land": "NL"
+                }
+
+        if is_belgian or not is_dutch:
+            # Try Nominatim for Belgium (OpenStreetMap - free)
+            query_parts = [f"postalcode={pc}", "country=BE", "format=json", "addressdetails=1", "limit=1"]
+            nom_url = f"https://nominatim.openstreetmap.org/search?{'&'.join(query_parts)}"
+            r3 = http_requests.get(nom_url, headers={"User-Agent": "Droomvriendjes-Webshop/1.0"}, timeout=5)
+            nom_data = r3.json()
+            if nom_data:
+                addr = nom_data[0].get("address", {})
+                stad = addr.get("city") or addr.get("town") or addr.get("village") or addr.get("municipality", "")
+                straat = addr.get("road", "")
+                return {
+                    "found": True,
+                    "straat": straat,
+                    "stad": stad,
+                    "postcode": pc,
+                    "land": "BE"
+                }
+
+        return {"found": False, "message": "Adres niet gevonden"}
+
+    except http_requests.exceptions.Timeout:
+        return {"found": False, "message": "Adres service tijdelijk niet beschikbaar"}
+    except Exception as e:
+        logger.error(f"Address lookup error: {e}")
+        return {"found": False, "message": "Fout bij het opzoeken van het adres"}
+
+
+@api_router.post("/funnel/event")
+async def track_funnel_event(data: dict):
+    """Track a customer journey funnel event"""
+    try:
+        event = {
+            "event_type": data.get("event_type"),  # product_view, add_to_cart, checkout_start, address_filled, payment_selected, purchase_success
+            "session_id": data.get("session_id", ""),
+            "product_id": data.get("product_id"),
+            "product_name": data.get("product_name"),
+            "cart_total": data.get("cart_total"),
+            "customer_email": data.get("customer_email"),
+            "metadata": data.get("metadata", {}),
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db.funnel_events.insert_one(event)
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Funnel event error: {e}")
+        return {"status": "error"}
+
+
+@api_router.get("/admin/funnel-stats")
+async def get_funnel_stats(days: int = 30):
+    """Get funnel statistics for the admin dashboard"""
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+        # Count events by type
+        pipeline = [
+            {"$match": {"created_at": {"$gte": cutoff}}},
+            {"$group": {"_id": "$event_type", "count": {"$sum": 1}}}
+        ]
+        results = await db.funnel_events.aggregate(pipeline).to_list(length=20)
+        counts = {r["_id"]: r["count"] for r in results}
+
+        # Also count from checkout_events (legacy)
+        checkout_count = await db.checkout_events.count_documents({"created_at": {"$gte": cutoff}})
+
+        steps = [
+            {"step": "Product bekeken", "key": "product_view", "count": counts.get("product_view", 0)},
+            {"step": "In winkelwagen", "key": "add_to_cart", "count": counts.get("add_to_cart", 0)},
+            {"step": "Checkout gestart", "key": "checkout_start", "count": max(counts.get("checkout_start", 0), checkout_count)},
+            {"step": "Adres ingevuld", "key": "address_filled", "count": counts.get("address_filled", 0)},
+            {"step": "Betaalmethode gekozen", "key": "payment_selected", "count": counts.get("payment_selected", 0)},
+            {"step": "Aankoop voltooid", "key": "purchase_success", "count": counts.get("purchase_success", 0)},
+        ]
+
+        # Calculate drop-off percentages
+        for i in range(len(steps)):
+            if i == 0:
+                steps[i]["dropoff"] = 0
+            else:
+                prev = steps[i-1]["count"]
+                curr = steps[i]["count"]
+                if prev > 0:
+                    steps[i]["dropoff"] = round(((prev - curr) / prev) * 100, 1)
+                else:
+                    steps[i]["dropoff"] = 0
+
+        return {"funnel": steps, "period_days": days}
+
+    except Exception as e:
+        logger.error(f"Funnel stats error: {e}")
+        return {"funnel": [], "period_days": days}
+
+
 @api_router.post("/checkout-started")
 async def checkout_started(checkout: CheckoutStartedCreate):
     """Track checkout start and send notification to owner"""
@@ -1010,7 +1156,7 @@ async def checkout_started(checkout: CheckoutStartedCreate):
         
         # Store checkout event in database
         checkout_dict = {
-            "customer_email": checkout.customer_email,
+            "customer_email": checkout.customer_email or "unknown@checkout.nl",
             "cart_items": [item.model_dump() for item in checkout.cart_items],
             "total_amount": checkout.total_amount,
             "session_id": session_id,
@@ -1019,10 +1165,13 @@ async def checkout_started(checkout: CheckoutStartedCreate):
         }
         
         await db.checkout_events.insert_one(checkout_dict)
-        logger.info(f"Checkout started: {checkout.customer_email} - Session: {session_id}")
+        customer_log = checkout.customer_email or f"Session:{session_id}"
+        logger.info(f"Checkout started: {customer_log}")
         
-        # Send email notification to owner
-        email_sent = send_checkout_started_email(checkout_dict)
+        # Send email notification to owner (only if we have meaningful cart data)
+        email_sent = False
+        if checkout.cart_items:
+            email_sent = send_checkout_started_email(checkout_dict)
         
         return {
             "status": "success",
@@ -1045,12 +1194,10 @@ async def validate_discount_code(data: DiscountCodeValidate):
         code = data.code.strip().upper()
         logger.info(f"Validating discount code: {code}")
         
-        # Check if it's a gift card code (starts with DV-)
-        if code.startswith("DV-"):
-            gift_card = await db.gift_cards.find_one({
-                "code": code,
-                "status": "active"
-            })
+        # Check if it's a gift card code (starts with DV-) - uses Supabase
+        if code.startswith("DV-") and supabase_client:
+            result = supabase_client.table("gift_cards").select("*").eq("code", code).eq("status", "active").limit(1).execute()
+            gift_card = result.data[0] if result.data else None
             
             if gift_card:
                 remaining = gift_card.get("remaining_amount", gift_card.get("amount", 0))
@@ -1059,7 +1206,7 @@ async def validate_discount_code(data: DiscountCodeValidate):
                     "valid": True,
                     "code": code,
                     "type": "gift_card",
-                    "discount_amount": discount,
+                    "discount_amount": round(discount, 2),
                     "message": f"Cadeaubon toegepast: -€{discount:.2f}"
                 }
             else:
@@ -1068,11 +1215,11 @@ async def validate_discount_code(data: DiscountCodeValidate):
                     "message": "Ongeldige of verlopen cadeaubon"
                 }
         
-        # Check regular discount codes
-        discount_code = await db.discount_codes.find_one({
-            "code": code,
-            "active": True
-        })
+        # Check regular discount codes via Supabase
+        discount_code = None
+        if supabase_client:
+            result = supabase_client.table("discount_codes").select("*").eq("code", code).eq("active", True).limit(1).execute()
+            discount_code = result.data[0] if result.data else None
         
         logger.info(f"Discount code lookup result: {discount_code is not None}")
         
@@ -1127,288 +1274,44 @@ async def validate_discount_code(data: DiscountCodeValidate):
         return {"valid": False, "message": "Er ging iets mis bij het valideren"}
 
 
-@api_router.post("/gift-card/purchase")
-async def purchase_gift_card(data: GiftCardPurchase):
-    """Create a gift card purchase and initiate payment"""
-    try:
-        # Verify Mollie API key is available - use fresh check
-        api_key = get_mollie_api_key()
-        if not api_key:
-            logger.error("Mollie API key not configured for gift card purchase")
-            raise HTTPException(status_code=500, detail="Betaalsysteem niet correct geconfigureerd. Neem contact op met support.")
-        
-        # Generate unique gift card code
-        gift_card_code = f"DV-{uuid.uuid4().hex[:8].upper()}"
-        
-        # Create gift card record (inactive until paid)
-        gift_card = {
-            "code": gift_card_code,
-            "amount": data.amount,
-            "remaining_amount": data.amount,
-            "sender_name": data.sender_name,
-            "sender_email": data.sender_email,
-            "recipient_name": data.recipient_name,
-            "recipient_email": data.recipient_email,
-            "message": data.message,
+
+
+# ============== ORDER & PAYMENT ENDPOINTS (MongoDB - only if not using Supabase) ==============
+# Note: When USE_SUPABASE=true, these endpoints are overridden by orders_supabase.py
+
+if not USE_SUPABASE:
+    @api_router.post("/orders")
+    async def create_order_mongo(order: OrderCreate):
+        """Create a new order (MongoDB)"""
+        order_dict = {
+            "customer_email": order.customer_email,
+            "customer_name": order.customer_name,
+            "customer_phone": order.customer_phone or "",
+            "customer_address": order.customer_address,
+            "customer_city": order.customer_city,
+            "customer_zipcode": order.customer_zipcode,
+            "customer_comment": order.customer_comment or "",
+            "items": [item.model_dump() for item in order.items],
+            "subtotal": order.subtotal or order.total_amount,
+            "discount": order.discount or 0,
+            "total_amount": order.total_amount,
+            "currency": "EUR",
             "status": "pending",
-            "created_at": datetime.now(timezone.utc).isoformat()
+            "mollie_payment_id": None,
+            "payment_method": None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat()
         }
         
-        result = await db.gift_cards.insert_one(gift_card)
-        gift_card_id = str(result.inserted_id)
+        result = await db.orders.insert_one(order_dict)
+        order_id = str(result.inserted_id)
         
-        # Create Mollie payment
-        logger.info(f"Creating gift card payment with API key: {api_key[:15]}...")
-        mollie_client = get_mollie_client()
+        # Send order notification to owner
+        order_dict['_id'] = order_id
+        send_order_notification_email(order_dict, 'order_placed')
         
-        # Use dynamic URLs for production
-        frontend_url = get_frontend_url()
-        api_url = get_api_url()
-        
-        payment = mollie_client.payments.create({
-            "amount": {
-                "currency": "EUR",
-                "value": f"{data.amount:.2f}"
-            },
-            "description": f"Droomvriendjes Cadeaubon €{data.amount:.2f}",
-            "redirectUrl": f"{frontend_url}/cadeaubon/succes?id={gift_card_id}",
-            "webhookUrl": f"{api_url}/api/webhook/gift-card",
-            "metadata": {
-                "gift_card_id": gift_card_id,
-                "type": "gift_card"
-            }
-        })
-        
-        # Update gift card with payment ID
-        await db.gift_cards.update_one(
-            {"_id": result.inserted_id},
-            {"$set": {"mollie_payment_id": payment.id}}
-        )
-        
-        logger.info(f"Gift card purchase initiated: {gift_card_code} for €{data.amount}")
-        
-        return {
-            "success": True,
-            "gift_card_id": gift_card_id,
-            "checkout_url": payment.checkout_url
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Gift card purchase error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Betaling aanmaken mislukt: {str(e)}")
-
-
-@api_router.post("/webhook/gift-card")
-async def gift_card_webhook(request: Request):
-    """Handle Mollie webhook for gift card payments"""
-    try:
-        form_data = await request.form()
-        payment_id = form_data.get("id")
-        
-        if not payment_id:
-            return {"status": "ignored"}
-        
-        mollie_client = get_mollie_client()
-        payment = mollie_client.payments.get(payment_id)
-        
-        # Find the gift card
-        gift_card = await db.gift_cards.find_one({"mollie_payment_id": payment_id})
-        
-        if not gift_card:
-            logger.warning(f"Gift card not found for payment: {payment_id}")
-            return {"status": "not_found"}
-        
-        if payment.is_paid():
-            # Activate the gift card
-            await db.gift_cards.update_one(
-                {"mollie_payment_id": payment_id},
-                {"$set": {"status": "active", "paid_at": datetime.now(timezone.utc).isoformat()}}
-            )
-            
-            # Send gift card email to recipient
-            send_gift_card_email(gift_card)
-            
-            # Send confirmation to sender
-            send_gift_card_confirmation_email(gift_card)
-            
-            logger.info(f"Gift card activated and emailed: {gift_card['code']}")
-        
-        elif payment.is_failed() or payment.is_canceled() or payment.is_expired():
-            await db.gift_cards.update_one(
-                {"mollie_payment_id": payment_id},
-                {"$set": {"status": "failed"}}
-            )
-            logger.info(f"Gift card payment failed: {gift_card['code']}")
-        
-        return {"status": "processed"}
-        
-    except Exception as e:
-        logger.error(f"Gift card webhook error: {str(e)}")
-        return {"status": "error"}
-
-
-def send_gift_card_email(gift_card: dict):
-    """Send gift card code to recipient"""
-    try:
-        recipient_email = gift_card.get("recipient_email")
-        recipient_name = gift_card.get("recipient_name", "")
-        sender_name = gift_card.get("sender_name", "Iemand")
-        amount = gift_card.get("amount", 0)
-        code = gift_card.get("code")
-        message = gift_card.get("message", "")
-        
-        subject = f"🎁 Je hebt een Droomvriendjes cadeaubon ontvangen!"
-        
-        html_content = f"""
-        <!DOCTYPE html>
-        <html>
-        <head><meta charset="utf-8"></head>
-        <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background: #f9f9f9;">
-            <div style="background: white; border-radius: 15px; padding: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
-                <div style="text-align: center; margin-bottom: 30px;">
-                    <h1 style="color: #7c3aed; margin: 0;">🎁 Cadeaubon</h1>
-                    <p style="color: #666; font-size: 18px;">Van {sender_name}</p>
-                </div>
-                
-                <div style="background: linear-gradient(135deg, #7c3aed 0%, #3b82f6 100%); color: white; padding: 30px; border-radius: 15px; text-align: center; margin-bottom: 20px;">
-                    <p style="margin: 0; font-size: 16px;">Waarde</p>
-                    <p style="margin: 10px 0; font-size: 48px; font-weight: bold;">€{amount:.2f}</p>
-                    <div style="background: rgba(255,255,255,0.2); padding: 15px; border-radius: 10px; margin-top: 20px;">
-                        <p style="margin: 0; font-size: 14px;">Jouw kortingscode:</p>
-                        <p style="margin: 10px 0 0 0; font-size: 28px; font-weight: bold; letter-spacing: 2px;">{code}</p>
-                    </div>
-                </div>
-                
-                {f'<div style="background: #f3e8ff; padding: 20px; border-radius: 10px; margin-bottom: 20px;"><p style="margin: 0; color: #7c3aed; font-style: italic;">"{message}"</p></div>' if message else ''}
-                
-                <div style="text-align: center; margin: 30px 0;">
-                    <a href="https://droomvriendjes.nl" style="display: inline-block; background: #7c3aed; color: white; padding: 15px 30px; border-radius: 8px; text-decoration: none; font-weight: bold;">
-                        Nu Besteden
-                    </a>
-                </div>
-                
-                <div style="border-top: 1px solid #eee; padding-top: 20px; text-align: center; color: #999; font-size: 14px;">
-                    <p>Voer de code in bij het afrekenen om je korting te gebruiken.</p>
-                    <p>Droomvriendjes - Slaapknuffels voor een betere nachtrust</p>
-                </div>
-            </div>
-        </body>
-        </html>
-        """
-        
-        text_content = f"""
-        CADEAUBON VAN {sender_name.upper()}
-        
-        Hoi {recipient_name}!
-        
-        Je hebt een Droomvriendjes cadeaubon ontvangen ter waarde van €{amount:.2f}!
-        
-        Jouw kortingscode: {code}
-        
-        {f'Bericht: "{message}"' if message else ''}
-        
-        Gebruik deze code bij het afrekenen op droomvriendjes.nl
-        
-        Veel plezier met je nieuwe Droomvriendjes!
-        """
-        
-        return send_email(recipient_email, subject, html_content, text_content)
-        
-    except Exception as e:
-        logger.error(f"Failed to send gift card email: {str(e)}")
-        return False
-
-
-def send_gift_card_confirmation_email(gift_card: dict):
-    """Send confirmation to gift card purchaser"""
-    try:
-        sender_email = gift_card.get("sender_email")
-        sender_name = gift_card.get("sender_name", "")
-        recipient_name = gift_card.get("recipient_name", "")
-        recipient_email = gift_card.get("recipient_email")
-        amount = gift_card.get("amount", 0)
-        code = gift_card.get("code")
-        
-        subject = f"✅ Je cadeaubon is verzonden naar {recipient_name}!"
-        
-        html_content = f"""
-        <!DOCTYPE html>
-        <html>
-        <head><meta charset="utf-8"></head>
-        <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-            <div style="background: white; border-radius: 10px; padding: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
-                <h1 style="color: #10b981; text-align: center;">✅ Cadeaubon Verzonden!</h1>
-                
-                <p>Beste {sender_name},</p>
-                
-                <p>Je cadeaubon ter waarde van <strong>€{amount:.2f}</strong> is succesvol verzonden naar {recipient_name} ({recipient_email}).</p>
-                
-                <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; margin: 20px 0;">
-                    <p style="margin: 0;"><strong>Code:</strong> {code}</p>
-                    <p style="margin: 5px 0 0 0;"><strong>Ontvanger:</strong> {recipient_email}</p>
-                </div>
-                
-                <p style="color: #666;">Bedankt voor je aankoop bij Droomvriendjes!</p>
-            </div>
-        </body>
-        </html>
-        """
-        
-        text_content = f"""
-        CADEAUBON VERZONDEN!
-        
-        Beste {sender_name},
-        
-        Je cadeaubon ter waarde van €{amount:.2f} is verzonden naar {recipient_name} ({recipient_email}).
-        
-        Code: {code}
-        
-        Bedankt voor je aankoop bij Droomvriendjes!
-        """
-        
-        return send_email(sender_email, subject, html_content, text_content)
-        
-    except Exception as e:
-        logger.error(f"Failed to send gift card confirmation: {str(e)}")
-        return False
-
-
-# ============== ORDER & PAYMENT ENDPOINTS ==============
-
-@api_router.post("/orders")
-async def create_order(order: OrderCreate):
-    """Create a new order"""
-    order_dict = {
-        "customer_email": order.customer_email,
-        "customer_name": order.customer_name,
-        "customer_phone": order.customer_phone or "",
-        "customer_address": order.customer_address,
-        "customer_city": order.customer_city,
-        "customer_zipcode": order.customer_zipcode,
-        "customer_comment": order.customer_comment or "",
-        "items": [item.model_dump() for item in order.items],
-        "subtotal": order.subtotal or order.total_amount,
-        "discount": order.discount or 0,
-        "total_amount": order.total_amount,
-        "currency": "EUR",
-        "status": "pending",
-        "mollie_payment_id": None,
-        "payment_method": None,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "updated_at": datetime.now(timezone.utc).isoformat()
-    }
-    
-    result = await db.orders.insert_one(order_dict)
-    order_id = str(result.inserted_id)
-    
-    # Send order notification to owner
-    order_dict['_id'] = order_id
-    send_order_notification_email(order_dict, 'order_placed')
-    
-    logger.info(f"Order created: {order_id}")
-    return {"order_id": order_id, "status": "pending"}
+        logger.info(f"Order created: {order_id}")
+        return {"order_id": order_id, "status": "pending"}
 
 
 @api_router.post("/payments/create")
@@ -1750,6 +1653,25 @@ async def admin_login(login: AdminLogin):
     raise HTTPException(status_code=401, detail="Ongeldige gebruikersnaam of wachtwoord")
 
 
+# Development helper - GET-based login for proxy issues
+@api_router.get("/admin/dev-login")
+async def admin_dev_login(u: str = "", p: str = ""):
+    """Development login endpoint (GET) for CRA proxy compatibility"""
+    password_hash = hashlib.sha256(p.encode()).hexdigest()
+    
+    if u == ADMIN_USERNAME and password_hash == ADMIN_PASSWORD_HASH:
+        token = secrets.token_urlsafe(32)
+        admin_tokens[token] = {"username": u, "created_at": datetime.now(timezone.utc).isoformat()}
+        logger.info(f"Admin dev-login successful: {u}")
+        return {
+            "success": True,
+            "token": token,
+            "admin": {"username": u}
+        }
+    
+    raise HTTPException(status_code=401, detail="Invalid credentials")
+
+
 @api_router.get("/admin/verify")
 async def verify_admin(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """Verify admin token"""
@@ -1766,237 +1688,157 @@ async def get_admin_dashboard(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None
 ):
-    """Get admin dashboard data with date filtering
-    
-    Args:
-        days: Number of days to look back (default 30, use 0 for all time)
-        start_date: Custom start date (YYYY-MM-DD format)
-        end_date: Custom end date (YYYY-MM-DD format)
-    """
+    """Optimized admin dashboard using Supabase queries"""
     admin = verify_admin_token(credentials)
     if not admin:
         raise HTTPException(status_code=401, detail="Niet geautoriseerd")
     
     try:
-        # Calculate date range
         now = datetime.now(timezone.utc)
         today = now.date()
         
         if start_date and end_date:
-            # Custom date range
             filter_start = datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc)
             filter_end = datetime.fromisoformat(end_date).replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
         elif days > 0:
-            # Last N days
             filter_start = now - timedelta(days=days)
             filter_end = now
         else:
-            # All time
             filter_start = datetime(2020, 1, 1, tzinfo=timezone.utc)
             filter_end = now
         
-        # Helper function to parse dates
-        def parse_date(date_str):
-            if not date_str:
-                return None
+        if USE_SUPABASE and supabase_client:
+            # === SUPABASE OPTIMIZED QUERIES ===
+            # Fetch only needed fields with server-side date filter
+            orders_result = supabase_client.table("orders").select(
+                "id, customer_email, customer_name, total_amount, status, created_at"
+            ).gte("created_at", filter_start.isoformat()).lte("created_at", filter_end.isoformat()).order("created_at", desc=True).execute()
+            orders = orders_result.data or []
+            
+            # Today's orders (separate optimized query)
+            today_str = today.isoformat()
+            today_result = supabase_client.table("orders").select(
+                "id, total_amount, status"
+            ).gte("created_at", today_str).execute()
+            today_orders_list = today_result.data or []
+            
+            # Recent 10 orders for display
+            recent_result = supabase_client.table("orders").select(
+                "id, order_number, customer_email, customer_name, total_amount, status, created_at"
+            ).order("created_at", desc=True).limit(10).execute()
+            recent_orders_raw = recent_result.data or []
+            
+            # Order items for popular products (only paid orders in period)
+            paid_order_ids = [o['id'] for o in orders if o.get('status') in ['paid', 'shipped', 'delivered']]
+            product_counts = {}
+            if paid_order_ids:
+                # Batch query for order items
+                for batch_start in range(0, len(paid_order_ids), 50):
+                    batch_ids = paid_order_ids[batch_start:batch_start+50]
+                    items_result = supabase_client.table("order_items").select(
+                        "product_name, product_sku, quantity, unit_price"
+                    ).in_("order_id", batch_ids).execute()
+                    for item in (items_result.data or []):
+                        key = item.get('product_name', 'Onbekend')
+                        qty = item.get('quantity', 1)
+                        price = item.get('unit_price', 0)
+                        if key not in product_counts:
+                            product_counts[key] = {'name': key, 'product_id': item.get('product_sku', ''), 'count': 0, 'revenue': 0}
+                        product_counts[key]['count'] += qty
+                        product_counts[key]['revenue'] += price * qty
+            
+            # Checkout events for funnel (Supabase)
+            checkout_events = []
             try:
-                return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
-            except:
-                return None
+                ce_result = supabase_client.table("checkout_events").select(
+                    "id, customer_email, total_amount, created_at"
+                ).gte("created_at", filter_start.isoformat()).lte("created_at", filter_end.isoformat()).execute()
+                checkout_events = ce_result.data or []
+            except Exception:
+                pass  # Table might not exist yet
+        else:
+            # Legacy MongoDB fallback
+            orders = []
+            today_orders_list = []
+            recent_orders_raw = []
+            product_counts = {}
+            checkout_events = []
         
-        # Get orders with MongoDB date filter and projection for better performance
-        # Use $gte and $lte on created_at string (ISO format sorts correctly)
-        orders_query = {
-            "created_at": {
-                "$gte": filter_start.isoformat(),
-                "$lte": filter_end.isoformat()
-            }
-        }
-        orders_projection = {
-            "_id": 1,
-            "customer_email": 1,
-            "customer_name": 1,
-            "total_amount": 1,
-            "status": 1,
-            "created_at": 1,
-            "items": 1
-        }
-        orders = await db.orders.find(orders_query, orders_projection).to_list(5000)
-        
-        # Also get all orders for today's stats (separate optimized query)
-        today_str = today.isoformat()[:10]  # YYYY-MM-DD format
-        all_orders_projection = {"_id": 1, "total_amount": 1, "status": 1, "created_at": 1, "items": 1}
-        all_orders = await db.orders.find({}, all_orders_projection).to_list(10000)
-        
-        # Calculate stats for filtered period
+        # === CALCULATE STATS (works for both backends) ===
         total_orders = len(orders)
         total_revenue = sum(o.get('total_amount', 0) for o in orders if o.get('status') in ['paid', 'shipped', 'delivered'])
         
-        # Order status counts
         pending_orders = len([o for o in orders if o.get('status') == 'pending'])
         paid_orders = len([o for o in orders if o.get('status') == 'paid'])
         shipped_orders = len([o for o in orders if o.get('status') == 'shipped'])
         delivered_orders = len([o for o in orders if o.get('status') == 'delivered'])
         cancelled_orders = len([o for o in orders if o.get('status') in ['cancelled', 'failed']])
         
-        # Today's stats (always show today regardless of filter)
-        today_str = today.isoformat()
-        today_orders = [o for o in all_orders if o.get('created_at', '').startswith(today_str)]
-        orders_today = len(today_orders)
-        revenue_today = sum(o.get('total_amount', 0) for o in today_orders if o.get('status') in ['paid', 'shipped', 'delivered'])
+        orders_today = len(today_orders_list)
+        revenue_today = sum(o.get('total_amount', 0) for o in today_orders_list if o.get('status') in ['paid', 'shipped', 'delivered'])
         
-        # Calculate previous period for comparison
-        period_length = (filter_end - filter_start).days or 1
-        prev_start = filter_start - timedelta(days=period_length)
-        prev_end = filter_start
+        paid_order_count = paid_orders + shipped_orders + delivered_orders
+        avg_order_value = total_revenue / paid_order_count if paid_order_count > 0 else 0
         
-        prev_orders = []
-        for o in all_orders:
-            order_date = parse_date(o.get('created_at', ''))
-            if order_date and prev_start <= order_date < prev_end:
-                prev_orders.append(o)
+        customer_emails = set(o.get('customer_email', '').lower() for o in orders if o.get('customer_email'))
+        total_customers = len(customer_emails)
         
-        prev_revenue = sum(o.get('total_amount', 0) for o in prev_orders if o.get('status') in ['paid', 'shipped', 'delivered'])
+        to_ship = len([o for o in orders if o.get('status') == 'paid'])
         
-        # Calculate growth percentage
-        if prev_revenue > 0:
-            revenue_growth = round(((total_revenue - prev_revenue) / prev_revenue) * 100, 1)
-        else:
-            revenue_growth = 100 if total_revenue > 0 else 0
-        
-        # Daily breakdown for chart
+        # Daily breakdown
         daily_data = {}
         for o in orders:
-            order_date = parse_date(o.get('created_at', ''))
-            if order_date:
-                day_key = order_date.date().isoformat()
+            created = o.get('created_at', '')
+            if created:
+                day_key = created[:10]
                 if day_key not in daily_data:
                     daily_data[day_key] = {'date': day_key, 'orders': 0, 'revenue': 0}
                 daily_data[day_key]['orders'] += 1
                 if o.get('status') in ['paid', 'shipped', 'delivered']:
                     daily_data[day_key]['revenue'] += o.get('total_amount', 0)
-        
-        # Sort daily data by date
         daily_breakdown = sorted(daily_data.values(), key=lambda x: x['date'])
-        
-        # Average order value
-        paid_order_count = len([o for o in orders if o.get('status') in ['paid', 'shipped', 'delivered']])
-        avg_order_value = total_revenue / paid_order_count if paid_order_count > 0 else 0
-        
-        # Unique customers
-        customer_emails = set(o.get('customer_email', '').lower() for o in orders if o.get('customer_email'))
-        total_customers = len(customer_emails)
-        
-        # To ship count
-        to_ship = len([o for o in orders if o.get('status') == 'paid' and not o.get('tracking_code')])
         
         # Top customers
         customer_spending = {}
         for order in orders:
-            email = order.get('customer_email', '').lower()
+            email = (order.get('customer_email') or '').lower()
             if email and order.get('status') in ['paid', 'shipped', 'delivered']:
                 if email not in customer_spending:
-                    customer_spending[email] = {
-                        'email': email,
-                        'name': order.get('customer_name', 'Onbekend'),
-                        'total_spent': 0,
-                        'order_count': 0
-                    }
+                    customer_spending[email] = {'email': email, 'name': order.get('customer_name', ''), 'total_spent': 0, 'order_count': 0}
                 customer_spending[email]['total_spent'] += order.get('total_amount', 0)
                 customer_spending[email]['order_count'] += 1
-        
         top_customers = sorted(customer_spending.values(), key=lambda x: x['total_spent'], reverse=True)[:5]
         
-        # Recent orders
-        recent_orders = sorted(orders, key=lambda x: x.get('created_at', ''), reverse=True)[:10]
+        # Recent orders formatted
         recent_orders_data = [{
-            'order_id': str(o.get('_id', '')),
+            'order_id': o.get('id', ''),
+            'order_number': o.get('order_number', ''),
             'customer_name': o.get('customer_name', ''),
             'customer_email': o.get('customer_email', ''),
             'total_amount': o.get('total_amount', 0),
             'status': o.get('status', 'pending'),
             'created_at': o.get('created_at', '')
-        } for o in recent_orders]
+        } for o in recent_orders_raw]
         
-        # ============== FUNNEL ANALYTICS ==============
-        # Get checkout events for funnel analysis with date filter and projection
-        checkout_query = {
-            "created_at": {
-                "$gte": filter_start.isoformat(),
-                "$lte": filter_end.isoformat()
-            }
-        }
-        checkout_projection = {
-            "_id": 1,
-            "customer_email": 1,
-            "cart_items": 1,
-            "total_amount": 1,
-            "created_at": 1
-        }
-        checkout_events = await db.checkout_events.find(checkout_query, checkout_projection).to_list(5000)
-        
-        # Calculate funnel metrics
-        # Step 1: Checkout Started (from checkout_events)
+        # Funnel analytics
         checkout_started = len(checkout_events)
-        
-        # Step 2: Orders Created (from orders - means they clicked pay)
-        orders_created = total_orders
-        
-        # Step 3: Payments Completed (paid orders)
         payments_completed = paid_orders + shipped_orders + delivered_orders
-        
-        # Calculate drop-off rates
-        checkout_to_order_rate = (orders_created / checkout_started * 100) if checkout_started > 0 else 0
-        order_to_payment_rate = (payments_completed / orders_created * 100) if orders_created > 0 else 0
-        
-        # Overall conversion rate (checkout to paid)
+        checkout_to_order_rate = (total_orders / checkout_started * 100) if checkout_started > 0 else 0
+        order_to_payment_rate = (payments_completed / total_orders * 100) if total_orders > 0 else 0
         overall_conversion = (payments_completed / checkout_started * 100) if checkout_started > 0 else 0
-        
-        # Abandoned carts (started checkout but no order created)
-        abandoned_checkouts = checkout_started - orders_created
+        abandoned_checkouts = max(0, checkout_started - total_orders)
         abandoned_rate = (abandoned_checkouts / checkout_started * 100) if checkout_started > 0 else 0
-        
-        # Payment failures/cancellations
-        payment_failures = cancelled_orders + pending_orders
-        payment_failure_rate = (payment_failures / orders_created * 100) if orders_created > 0 else 0
-        
-        # Popular products (from completed orders)
-        product_counts = {}
-        for order in orders:
-            if order.get('status') in ['paid', 'shipped', 'delivered']:
-                for item in order.get('items', []):
-                    product_name = item.get('product_name', 'Onbekend')
-                    product_id = item.get('product_id', '')
-                    qty = item.get('quantity', 1)
-                    key = product_name
-                    if key not in product_counts:
-                        product_counts[key] = {'name': product_name, 'product_id': product_id, 'count': 0, 'revenue': 0}
-                    product_counts[key]['count'] += qty
-                    product_counts[key]['revenue'] += item.get('price', 0) * qty
         
         popular_products = sorted(product_counts.values(), key=lambda x: x['revenue'], reverse=True)[:5]
         
-        # Recent checkout events (last 10 abandoned)
-        abandoned_emails = set()
-        for ce in checkout_events:
-            email = ce.get('customer_email', '').lower()
-            if email:
-                # Check if this email has a successful order
-                has_order = any(o.get('customer_email', '').lower() == email and o.get('status') in ['paid', 'shipped', 'delivered'] for o in orders)
-                if not has_order:
-                    abandoned_emails.add(email)
-        
-        recent_abandoned = []
-        for ce in sorted(checkout_events, key=lambda x: x.get('created_at', ''), reverse=True):
-            email = ce.get('customer_email', '').lower()
-            if email in abandoned_emails and len(recent_abandoned) < 10:
-                recent_abandoned.append({
-                    'email': email,
-                    'total_amount': ce.get('total_amount', 0),
-                    'items_count': len(ce.get('cart_items', [])),
-                    'created_at': ce.get('created_at', '')
-                })
-                abandoned_emails.discard(email)  # Only show each email once
+        # Revenue growth (simplified - compare first half to second half of period)
+        revenue_growth = 0
+        if len(daily_breakdown) >= 2:
+            mid = len(daily_breakdown) // 2
+            first_half = sum(d['revenue'] for d in daily_breakdown[:mid])
+            second_half = sum(d['revenue'] for d in daily_breakdown[mid:])
+            if first_half > 0:
+                revenue_growth = round(((second_half - first_half) / first_half) * 100, 1)
         
         return {
             'date_range': {
@@ -2020,24 +1862,24 @@ async def get_admin_dashboard(
                 'to_ship': to_ship,
                 'revenue_growth': revenue_growth,
                 'conversion_rate': round(overall_conversion, 1),
-                'new_customers_week': 5,
-                'new_customers_today': 1
+                'new_customers_week': total_customers,
+                'new_customers_today': orders_today
             },
             'daily_breakdown': daily_breakdown,
             'funnel': {
                 'checkout_started': checkout_started,
-                'orders_created': orders_created,
+                'orders_created': total_orders,
                 'payments_completed': payments_completed,
                 'checkout_to_order_rate': round(checkout_to_order_rate, 1),
                 'order_to_payment_rate': round(order_to_payment_rate, 1),
                 'overall_conversion': round(overall_conversion, 1),
                 'abandoned_checkouts': abandoned_checkouts,
                 'abandoned_rate': round(abandoned_rate, 1),
-                'payment_failures': payment_failures,
-                'payment_failure_rate': round(payment_failure_rate, 1)
+                'payment_failures': cancelled_orders + pending_orders,
+                'payment_failure_rate': round(((cancelled_orders + pending_orders) / total_orders * 100) if total_orders > 0 else 0, 1)
             },
             'popular_products': popular_products,
-            'abandoned_carts': recent_abandoned,
+            'abandoned_carts': [],
             'recent_orders': recent_orders_data,
             'top_customers': top_customers
         }
@@ -2078,77 +1920,217 @@ class TrackingUpdate(BaseModel):
 
 
 @api_router.get("/admin/orders")
-async def get_admin_orders():
-    """Get all orders for admin panel"""
+async def get_admin_orders(
+    status: Optional[str] = None,
+    search: Optional[str] = None,
+    page: int = 1,
+    limit: int = 50
+):
+    """Get all orders for admin panel - Supabase optimized"""
     try:
-        # Use projection to fetch only needed fields for better performance
-        orders_projection = {
-            "_id": 1,
-            "customer_email": 1,
-            "customer_name": 1,
-            "total_amount": 1,
-            "status": 1,
-            "tracking_code": 1,
-            "carrier": 1,
-            "created_at": 1,
-            "items": 1
-        }
-        orders = await db.orders.find({}, orders_projection).sort("created_at", -1).to_list(500)
-        
-        result = []
-        for order in orders:
-            result.append({
-                "order_id": str(order["_id"]),
-                "customer_email": order.get("customer_email", ""),
-                "customer_name": order.get("customer_name", ""),
-                "total_amount": order.get("total_amount", 0),
-                "status": order.get("status", "pending"),
-                "tracking_code": order.get("tracking_code"),
-                "carrier": order.get("carrier"),
-                "created_at": order.get("created_at", ""),
-                "items": order.get("items", [])
-            })
-        
-        return {"orders": result, "count": len(result)}
+        if USE_SUPABASE and supabase_client:
+            query = supabase_client.table("orders").select(
+                "id, order_number, customer_email, customer_name, customer_phone, "
+                "total_amount, status, tracking_number, tracking_url, "
+                "shipping_address, shipping_city, shipping_zipcode, "
+                "created_at, shipped_at, customer_notes, admin_notes"
+            ).order("created_at", desc=True)
+            
+            if status and status != 'all':
+                query = query.eq("status", status)
+            
+            if search:
+                query = query.or_(
+                    f"customer_email.ilike.%{search}%,"
+                    f"customer_name.ilike.%{search}%,"
+                    f"order_number.ilike.%{search}%"
+                )
+            
+            # Pagination
+            offset = (page - 1) * limit
+            query = query.range(offset, offset + limit - 1)
+            
+            result = query.execute()
+            orders = result.data or []
+            
+            # Get total count
+            count_query = supabase_client.table("orders").select("id", count="exact")
+            if status and status != 'all':
+                count_query = count_query.eq("status", status)
+            count_result = count_query.execute()
+            total_count = count_result.count if hasattr(count_result, 'count') and count_result.count else len(orders)
+            
+            # Status counts for filters
+            all_statuses = supabase_client.table("orders").select("status").execute()
+            status_counts = {}
+            for o in (all_statuses.data or []):
+                s = o.get('status', 'pending')
+                status_counts[s] = status_counts.get(s, 0) + 1
+            
+            formatted = [{
+                "order_id": o.get("id", ""),
+                "order_number": o.get("order_number", ""),
+                "customer_email": o.get("customer_email", ""),
+                "customer_name": o.get("customer_name", ""),
+                "customer_phone": o.get("customer_phone", ""),
+                "total_amount": o.get("total_amount", 0),
+                "status": o.get("status", "pending"),
+                "tracking_code": o.get("tracking_number"),
+                "carrier": None,
+                "label_url": o.get("tracking_url"),
+                "shipping_address": o.get("shipping_address", ""),
+                "shipping_city": o.get("shipping_city", ""),
+                "shipping_zipcode": o.get("shipping_zipcode", ""),
+                "created_at": o.get("created_at", ""),
+                "shipped_at": o.get("shipped_at"),
+                "notes": o.get("customer_notes", "") or o.get("admin_notes", "")
+            } for o in orders]
+            
+            return {
+                "orders": formatted,
+                "count": len(formatted),
+                "total": total_count,
+                "page": page,
+                "limit": limit,
+                "status_counts": status_counts
+            }
+        else:
+            return {"orders": [], "count": 0, "total": 0, "page": 1, "limit": limit, "status_counts": {}}
         
     except Exception as e:
         logger.error(f"Get admin orders error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@api_router.get("/admin/orders/{order_id}")
+async def get_admin_order_detail(order_id: str):
+    """Get detailed order info including items"""
+    try:
+        if USE_SUPABASE and supabase_client:
+            order_result = supabase_client.table("orders").select("*").eq("id", order_id).limit(1).execute()
+            if not order_result.data:
+                raise HTTPException(status_code=404, detail="Bestelling niet gevonden")
+            
+            order = order_result.data[0]
+            items_result = supabase_client.table("order_items").select("*").eq("order_id", order_id).execute()
+            items = items_result.data or []
+            
+            return {
+                "order": {
+                    "order_id": order.get("id", ""),
+                    "order_number": order.get("order_number", ""),
+                    "customer_email": order.get("customer_email", ""),
+                    "customer_name": order.get("customer_name", ""),
+                    "customer_phone": order.get("customer_phone", ""),
+                    "total_amount": order.get("total_amount", 0),
+                    "status": order.get("status", "pending"),
+                    "tracking_code": order.get("tracking_number"),
+                    "carrier": None,
+                    "label_url": order.get("tracking_url"),
+                    "shipping_address": order.get("shipping_address", ""),
+                    "shipping_city": order.get("shipping_city", ""),
+                    "shipping_zipcode": order.get("shipping_zipcode", ""),
+                    "payment_id": order.get("mollie_payment_id"),
+                    "payment_method": order.get("payment_method"),
+                    "created_at": order.get("created_at", ""),
+                    "shipped_at": order.get("shipped_at"),
+                    "notes": order.get("customer_notes", "") or order.get("admin_notes", ""),
+                    "coupon_code": order.get("discount_code"),
+                    "discount_amount": order.get("discount_amount", 0)
+                },
+                "items": [{
+                    "product_name": i.get("product_name", ""),
+                    "product_sku": i.get("product_sku", ""),
+                    "quantity": i.get("quantity", 1),
+                    "unit_price": i.get("unit_price", 0),
+                    "total_price": i.get("quantity", 1) * i.get("unit_price", 0)
+                } for i in items]
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Database not configured")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get order detail error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.put("/admin/orders/{order_id}/status")
+async def update_order_status(order_id: str, data: dict):
+    """Update order status"""
+    new_status = data.get("status")
+    valid_statuses = ["pending", "paid", "shipped", "delivered", "cancelled"]
+    if new_status not in valid_statuses:
+        raise HTTPException(status_code=400, detail=f"Ongeldige status. Kies uit: {', '.join(valid_statuses)}")
+    
+    try:
+        if USE_SUPABASE and supabase_client:
+            updates = {
+                "status": new_status,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }
+            if new_status == "shipped":
+                updates["shipped_at"] = datetime.now(timezone.utc).isoformat()
+            if new_status == "delivered":
+                updates["delivered_at"] = datetime.now(timezone.utc).isoformat()
+            
+            result = supabase_client.table("orders").update(updates).eq("id", order_id).execute()
+            if not result.data:
+                raise HTTPException(status_code=404, detail="Bestelling niet gevonden")
+            
+            logger.info(f"Order {order_id} status updated to {new_status}")
+            
+            # Send review request email when order is delivered
+            if new_status == "delivered":
+                try:
+                    order = result.data[0]
+                    items_result = supabase_client.table("order_items").select("*").eq("order_id", order_id).execute()
+                    items = items_result.data or []
+                    send_review_request_email(order, items)
+                except Exception as email_err:
+                    logger.error(f"Failed to send review request email: {email_err}")
+            
+            return {"success": True, "status": new_status}
+        else:
+            raise HTTPException(status_code=500, detail="Database not configured")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Update order status error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @api_router.post("/admin/orders/{order_id}/tracking")
 async def update_order_tracking(order_id: str, tracking: TrackingUpdate):
-    """Add or update tracking code for an order"""
+    """Add or update tracking code for an order - Supabase"""
     try:
-        order = await db.orders.find_one({"_id": ObjectId(order_id)})
-        if not order:
-            raise HTTPException(status_code=404, detail="Bestelling niet gevonden")
-        
-        # Update order with tracking info
-        await db.orders.update_one(
-            {"_id": ObjectId(order_id)},
-            {"$set": {
-                "tracking_code": tracking.tracking_code,
-                "carrier": tracking.carrier,
+        if USE_SUPABASE and supabase_client:
+            order_result = supabase_client.table("orders").select("*").eq("id", order_id).limit(1).execute()
+            if not order_result.data:
+                raise HTTPException(status_code=404, detail="Bestelling niet gevonden")
+            
+            order = order_result.data[0]
+            
+            supabase_client.table("orders").update({
+                "tracking_number": tracking.tracking_code,
                 "status": "shipped",
                 "shipped_at": datetime.now(timezone.utc).isoformat(),
                 "updated_at": datetime.now(timezone.utc).isoformat()
-            }}
-        )
-        
-        logger.info(f"Tracking added to order {order_id}: {tracking.carrier} - {tracking.tracking_code}")
-        
-        # Send tracking email to customer
-        if tracking.send_email:
-            email_sent = send_tracking_email(order, tracking.tracking_code, tracking.carrier)
-        else:
+            }).eq("id", order_id).execute()
+            
+            logger.info(f"Tracking added to order {order_id}: {tracking.carrier} - {tracking.tracking_code}")
+            
             email_sent = False
-        
-        return {
-            "success": True,
-            "message": "Tracking code toegevoegd",
-            "email_sent": email_sent
-        }
+            if tracking.send_email:
+                email_sent = send_tracking_email(order, tracking.tracking_code, tracking.carrier)
+            
+            return {
+                "success": True,
+                "message": "Tracking code toegevoegd",
+                "email_sent": email_sent
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Database not configured")
         
     except HTTPException:
         raise
@@ -2162,7 +2144,7 @@ def send_tracking_email(order: dict, tracking_code: str, carrier: str):
     try:
         customer_email = order.get("customer_email")
         customer_name = order.get("customer_name", "Klant")
-        order_id = str(order.get("_id", ""))[-8:].upper()
+        order_id = (order.get("order_number") or order.get("id", ""))[-8:].upper()
         
         carrier_info = CARRIERS.get(carrier, CARRIERS["postnl"])
         tracking_url = carrier_info["tracking_url"].replace("{code}", tracking_code)
@@ -2243,6 +2225,113 @@ def send_tracking_email(order: dict, tracking_code: str, carrier: str):
         
     except Exception as e:
         logger.error(f"Failed to send tracking email: {str(e)}")
+        return False
+
+
+def send_review_request_email(order: dict, items: list):
+    """Send review request email to customer after order is delivered"""
+    try:
+        customer_email = order.get("customer_email")
+        customer_name = order.get("customer_name", "Klant")
+        order_number = (order.get("order_number") or order.get("id", ""))[-8:].upper()
+
+        if not customer_email:
+            logger.warning(f"No customer email for order {order_number}, skipping review request")
+            return False
+
+        product_names = [item.get("product_name", "Product") for item in items]
+        products_text = ", ".join(product_names) if product_names else "je producten"
+
+        items_html = ""
+        for item in items:
+            items_html += f"""
+            <div style="display: flex; align-items: center; padding: 12px; background: #fdf8f3; border-radius: 8px; margin-bottom: 8px;">
+                <div style="flex: 1;">
+                    <div style="font-weight: 600; color: #333;">{item.get('product_name', 'Product')}</div>
+                    <div style="font-size: 12px; color: #999;">{item.get('quantity', 1)}x</div>
+                </div>
+            </div>"""
+
+        frontend_url = get_frontend_url()
+        review_url = f"{frontend_url}/reviews"
+
+        subject = f"Hoe bevalt je Droomvriendjes bestelling? #{order_number}"
+
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head><meta charset="utf-8"></head>
+        <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background: #f9f9f9;">
+            <div style="background: white; border-radius: 15px; padding: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+                <div style="text-align: center; margin-bottom: 30px;">
+                    <h1 style="color: #8B7355; margin: 0;">Hoe bevalt je bestelling?</h1>
+                    <p style="color: #666; font-size: 16px; margin-top: 8px;">We horen graag wat je ervan vindt!</p>
+                </div>
+
+                <p style="color: #333; line-height: 1.6;">Beste {customer_name},</p>
+
+                <p style="color: #666; line-height: 1.6;">
+                    Je bestelling <strong>#{order_number}</strong> is afgeleverd! We hopen dat je blij bent met {products_text}.
+                </p>
+
+                <p style="color: #666; line-height: 1.6;">
+                    Zou je een paar minuten willen nemen om een review te schrijven? Jouw feedback helpt andere ouders bij hun keuze en helpt ons om nog betere producten te maken.
+                </p>
+
+                <div style="margin: 20px 0;">
+                    <h3 style="color: #8B7355; margin-bottom: 12px;">Je bestelde producten:</h3>
+                    {items_html}
+                </div>
+
+                <div style="text-align: center; margin: 30px 0;">
+                    <a href="{review_url}"
+                       style="display: inline-block; background: #8B7355; color: white; padding: 15px 40px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 16px;">
+                        Schrijf een Review
+                    </a>
+                </div>
+
+                <div style="background: #fdf8f3; padding: 20px; border-radius: 10px; margin: 25px 0; text-align: center;">
+                    <p style="margin: 0; color: #8B7355; font-weight: 600;">Als dank krijg je 10% korting op je volgende bestelling!</p>
+                    <p style="margin: 8px 0 0 0; color: #999; font-size: 13px;">Je ontvangt de kortingscode nadat je review is geplaatst.</p>
+                </div>
+
+                <div style="border-top: 1px solid #eee; margin-top: 30px; padding-top: 20px; text-align: center; color: #999; font-size: 14px;">
+                    <p>Vragen? Mail naar <a href="mailto:info@droomvriendjes.nl" style="color: #8B7355;">info@droomvriendjes.nl</a></p>
+                    <p style="margin-top: 15px;">
+                        Droomvriendjes<br>
+                        <span style="font-size: 12px;">Slaapknuffels voor een betere nachtrust</span>
+                    </p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+
+        text_content = f"""
+HOE BEVALT JE BESTELLING?
+
+Beste {customer_name},
+
+Je bestelling #{order_number} is afgeleverd! We hopen dat je blij bent met {products_text}.
+
+Zou je een review willen schrijven? Jouw feedback helpt andere ouders bij hun keuze.
+
+Schrijf een review: {review_url}
+
+Als dank krijg je 10% korting op je volgende bestelling!
+
+Vragen? Mail naar info@droomvriendjes.nl
+
+Droomvriendjes
+        """
+
+        result = send_email(customer_email, subject, html_content, text_content)
+        if result:
+            logger.info(f"Review request email sent for order {order_number} to {customer_email}")
+        return result
+
+    except Exception as e:
+        logger.error(f"Failed to send review request email: {str(e)}")
         return False
 
 
@@ -2545,12 +2634,13 @@ async def debug_env():
 # Feed products JSON endpoint (moet voor include_router)
 @api_router.get("/feed/products")
 async def get_feed_products():
-    """Get all products formatted for Google Shopping feed (JSON)"""
+    """Get all products formatted for Google Shopping feed (JSON) - Dynamic from MongoDB"""
+    products_data = await get_products_for_feed()
     return {
         "merchant_center_id": MERCHANT_CENTER_ID,
         "shop_url": SHOP_URL,
-        "products_count": len(PRODUCTS_DATA),
-        "products": PRODUCTS_DATA,
+        "products_count": len(products_data),
+        "products": products_data,
         "feed_url": f"{SHOP_URL}/api/feed/google-shopping.xml"
     }
 
@@ -3244,7 +3334,10 @@ from fastapi.responses import Response
 
 @app.get("/api/feed/google-shopping.xml")
 async def google_shopping_feed():
-    """Generate Google Shopping Product Feed in XML format"""
+    """Generate Google Shopping Product Feed in XML format - Dynamic from MongoDB"""
+    
+    # Fetch products from database
+    products_data = await get_products_for_feed()
     
     xml_content = f'''<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:g="http://base.google.com/ns/1.0">
@@ -3254,7 +3347,7 @@ async def google_shopping_feed():
     <description>Ontdek onze slaapknuffels met sterrenprojector en rustgevende geluiden. Gratis verzending en 14 dagen retour.</description>
 '''
     
-    for product in PRODUCTS_DATA:
+    for product in products_data:
         xml_content += f'''
     <item>
       <g:id>{product["id"]}</g:id>
