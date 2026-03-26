@@ -415,6 +415,262 @@ const AdminDashboardPage = () => {
           </Card>
         )}
 
+        {/* Marketing Channels Performance */}
+        {stats?.channel_stats && (
+          <Card className="mb-8" data-testid="channel-analytics-card">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Target className="w-5 h-5 text-blue-600" />
+                📊 Marketing Kanalen - Waar Komen Klanten Vandaan?
+              </CardTitle>
+              <p className="text-sm text-gray-600 mt-2">
+                Prestaties per marketing channel: Facebook, Instagram, TikTok, Email & Organisch
+              </p>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {/* Facebook */}
+                <div className="bg-blue-50 rounded-xl p-5 border-2 border-blue-200 hover:shadow-lg transition-all">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center text-white text-xl font-bold">
+                      f
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-lg text-gray-900">Facebook</h3>
+                      <p className="text-xs text-gray-600">Meta Ads</p>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-600">Orders:</span>
+                      <span className="font-bold text-blue-700">{stats.channel_stats.facebook?.orders || 0}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-600">Omzet:</span>
+                      <span className="font-bold text-green-700">€{(stats.channel_stats.facebook?.revenue || 0).toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-600">Conversie:</span>
+                      <span className="font-bold text-purple-700">{(stats.channel_stats.facebook?.conversion_rate || 0).toFixed(1)}%</span>
+                    </div>
+                  </div>
+                  <div className="mt-4 pt-3 border-t border-blue-200">
+                    <div className="w-full bg-blue-200 rounded-full h-2">
+                      <div 
+                        className="bg-blue-600 h-2 rounded-full transition-all" 
+                        style={{ width: `${Math.min(100, (stats.channel_stats.facebook?.conversion_rate || 0))}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Instagram */}
+                <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl p-5 border-2 border-purple-200 hover:shadow-lg transition-all">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-12 h-12 bg-gradient-to-br from-purple-600 to-pink-600 rounded-full flex items-center justify-center text-white text-xl font-bold">
+                      📷
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-lg text-gray-900">Instagram</h3>
+                      <p className="text-xs text-gray-600">Stories & Posts</p>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-600">Orders:</span>
+                      <span className="font-bold text-purple-700">{stats.channel_stats.instagram?.orders || 0}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-600">Omzet:</span>
+                      <span className="font-bold text-green-700">€{(stats.channel_stats.instagram?.revenue || 0).toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-600">Conversie:</span>
+                      <span className="font-bold text-pink-700">{(stats.channel_stats.instagram?.conversion_rate || 0).toFixed(1)}%</span>
+                    </div>
+                  </div>
+                  <div className="mt-4 pt-3 border-t border-purple-200">
+                    <div className="w-full bg-purple-200 rounded-full h-2">
+                      <div 
+                        className="bg-gradient-to-r from-purple-600 to-pink-600 h-2 rounded-full transition-all" 
+                        style={{ width: `${Math.min(100, (stats.channel_stats.instagram?.conversion_rate || 0))}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* TikTok */}
+                <div className="bg-gray-900 rounded-xl p-5 border-2 border-gray-700 hover:shadow-lg transition-all text-white">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center text-gray-900 text-xl font-bold">
+                      🎵
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-lg">TikTok</h3>
+                      <p className="text-xs text-gray-400">Video Ads</p>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-400">Orders:</span>
+                      <span className="font-bold text-cyan-400">{stats.channel_stats.tiktok?.orders || 0}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-400">Omzet:</span>
+                      <span className="font-bold text-green-400">€{(stats.channel_stats.tiktok?.revenue || 0).toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-400">Conversie:</span>
+                      <span className="font-bold text-pink-400">{(stats.channel_stats.tiktok?.conversion_rate || 0).toFixed(1)}%</span>
+                    </div>
+                  </div>
+                  <div className="mt-4 pt-3 border-t border-gray-700">
+                    <div className="w-full bg-gray-700 rounded-full h-2">
+                      <div 
+                        className="bg-cyan-400 h-2 rounded-full transition-all" 
+                        style={{ width: `${Math.min(100, (stats.channel_stats.tiktok?.conversion_rate || 0))}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Email Marketing */}
+                <div className="bg-green-50 rounded-xl p-5 border-2 border-green-200 hover:shadow-lg transition-all">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-12 h-12 bg-green-600 rounded-full flex items-center justify-center">
+                      <Mail className="w-6 h-6 text-white" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-lg text-gray-900">Email</h3>
+                      <p className="text-xs text-gray-600">Nieuwsbrieven</p>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-600">Orders:</span>
+                      <span className="font-bold text-green-700">{stats.channel_stats.email?.orders || 0}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-600">Omzet:</span>
+                      <span className="font-bold text-green-700">€{(stats.channel_stats.email?.revenue || 0).toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-600">Conversie:</span>
+                      <span className="font-bold text-purple-700">{(stats.channel_stats.email?.conversion_rate || 0).toFixed(1)}%</span>
+                    </div>
+                  </div>
+                  <div className="mt-4 pt-3 border-t border-green-200">
+                    <div className="w-full bg-green-200 rounded-full h-2">
+                      <div 
+                        className="bg-green-600 h-2 rounded-full transition-all" 
+                        style={{ width: `${Math.min(100, (stats.channel_stats.email?.conversion_rate || 0))}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Organic */}
+                <div className="bg-yellow-50 rounded-xl p-5 border-2 border-yellow-200 hover:shadow-lg transition-all">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-12 h-12 bg-yellow-600 rounded-full flex items-center justify-center text-white text-xl">
+                      🔍
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-lg text-gray-900">Organisch</h3>
+                      <p className="text-xs text-gray-600">Google SEO</p>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-600">Orders:</span>
+                      <span className="font-bold text-yellow-700">{stats.channel_stats.organic?.orders || 0}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-600">Omzet:</span>
+                      <span className="font-bold text-green-700">€{(stats.channel_stats.organic?.revenue || 0).toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-600">Conversie:</span>
+                      <span className="font-bold text-purple-700">{(stats.channel_stats.organic?.conversion_rate || 0).toFixed(1)}%</span>
+                    </div>
+                  </div>
+                  <div className="mt-4 pt-3 border-t border-yellow-200">
+                    <div className="w-full bg-yellow-200 rounded-full h-2">
+                      <div 
+                        className="bg-yellow-600 h-2 rounded-full transition-all" 
+                        style={{ width: `${Math.min(100, (stats.channel_stats.organic?.conversion_rate || 0))}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Direct */}
+                <div className="bg-gray-50 rounded-xl p-5 border-2 border-gray-200 hover:shadow-lg transition-all">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-12 h-12 bg-gray-600 rounded-full flex items-center justify-center text-white text-xl">
+                      🌐
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-lg text-gray-900">Direct</h3>
+                      <p className="text-xs text-gray-600">Typte URL in</p>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-600">Orders:</span>
+                      <span className="font-bold text-gray-700">{stats.channel_stats.direct?.orders || 0}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-600">Omzet:</span>
+                      <span className="font-bold text-green-700">€{(stats.channel_stats.direct?.revenue || 0).toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-600">Conversie:</span>
+                      <span className="font-bold text-purple-700">{(stats.channel_stats.direct?.conversion_rate || 0).toFixed(1)}%</span>
+                    </div>
+                  </div>
+                  <div className="mt-4 pt-3 border-t border-gray-200">
+                    <div className="w-full bg-gray-200 rounded-full h-2">
+                      <div 
+                        className="bg-gray-600 h-2 rounded-full transition-all" 
+                        style={{ width: `${Math.min(100, (stats.channel_stats.direct?.conversion_rate || 0))}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Channel Comparison Summary */}
+              <div className="mt-8 p-6 bg-gradient-to-r from-purple-50 to-blue-50 rounded-xl border-2 border-purple-200">
+                <h4 className="font-bold text-lg mb-4 flex items-center gap-2">
+                  <Trophy className="w-5 h-5 text-yellow-600" />
+                  Top Performing Channel
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="text-center p-4 bg-white rounded-lg">
+                    <p className="text-sm text-gray-600 mb-1">Meeste Orders</p>
+                    <p className="text-xl font-bold text-purple-700">
+                      {Object.entries(stats.channel_stats).reduce((a, b) => a[1].orders > b[1].orders ? a : b)[0].toUpperCase()}
+                    </p>
+                  </div>
+                  <div className="text-center p-4 bg-white rounded-lg">
+                    <p className="text-sm text-gray-600 mb-1">Hoogste Omzet</p>
+                    <p className="text-xl font-bold text-green-700">
+                      {Object.entries(stats.channel_stats).reduce((a, b) => a[1].revenue > b[1].revenue ? a : b)[0].toUpperCase()}
+                    </p>
+                  </div>
+                  <div className="text-center p-4 bg-white rounded-lg">
+                    <p className="text-sm text-gray-600 mb-1">Best Conversie</p>
+                    <p className="text-xl font-bold text-blue-700">
+                      {Object.entries(stats.channel_stats).reduce((a, b) => a[1].conversion_rate > b[1].conversion_rate ? a : b)[0].toUpperCase()}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Order Status Overview */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
           <Card>
