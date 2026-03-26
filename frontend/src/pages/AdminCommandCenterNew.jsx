@@ -195,6 +195,7 @@ const AdminCommandCenterNew = () => {
     { id: 'divider-marketing', label: 'Marketing', divider: true },
     { id: 'email', icon: Send, label: 'E-mail Marketing', link: '/admin/email-marketing' },
     { id: 'email-templates', icon: Mail, label: 'Email Templates', link: '/admin/email-templates' },
+    { id: 'email-logs', icon: Mail, label: 'Verzonden E-mails', link: '/admin/email-logs' },
     { id: 'ai-campaigns', icon: Zap, label: 'AI Campagnes', link: '/admin/ai-campaigns' },
     { id: 'reviews', icon: Star, label: 'Reviews', link: '/admin/reviews-tool' },
     { id: 'divider-system', label: 'Systeem', divider: true },

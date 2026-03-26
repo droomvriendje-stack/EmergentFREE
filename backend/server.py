@@ -175,6 +175,7 @@ from routes import dashboard_analytics as dashboard_analytics_route
 from routes import ai_campaigns as ai_campaigns_route
 from routes import gift_cards_supabase as gift_cards_supabase_route
 from routes import csv_import as csv_import_route
+from routes import email_logs as email_logs_route
 
 # Configure routes based on database choice
 if USE_SUPABASE and supabase_client:
@@ -246,6 +247,12 @@ ai_campaigns_route.set_supabase_client(supabase_client)
 
 # Database Info
 app.include_router(database_info_route.router)
+
+# Email Logs
+if USE_SUPABASE and supabase_client:
+    logger.info("🚀 Using SUPABASE for email logs")
+    email_logs_route.set_supabase_client(supabase_client)
+    api_router.include_router(email_logs_route.router)
 
 # ============== GOOGLE SHOPPING FEED CONSTANTS ==============
 SHOP_URL = os.environ.get('SHOP_URL', 'https://droomvriendjes.nl')
@@ -383,7 +390,32 @@ async def api_health_check():
 
 # ============== EMAIL FUNCTIONS ==============
 
-def send_email(to_email: str, subject: str, html_content: str, text_content: str, reply_to: str = None):
+# Email logging helper - will be populated after routes are set up
+_email_log_queue = []
+
+def _log_email_to_db(to_email: str, subject: str, email_type: str, status: str, order_id: str = None, customer_name: str = None, metadata: dict = None):
+    """Log email to database via Supabase"""
+    try:
+        if supabase_client:
+            import uuid as _uuid
+            log_data = {
+                "id": str(_uuid.uuid4()),
+                "to_email": to_email,
+                "subject": subject,
+                "email_type": email_type,
+                "status": status,
+                "order_id": order_id,
+                "customer_name": customer_name,
+                "metadata": json.dumps(metadata) if metadata else None,
+                "created_at": datetime.now(timezone.utc).isoformat()
+            }
+            supabase_client.table("email_logs").insert(log_data).execute()
+            logger.info(f"📧 Email logged: {email_type} to {to_email}")
+    except Exception as e:
+        logger.error(f"Failed to log email to DB: {e}")
+
+
+def send_email(to_email: str, subject: str, html_content: str, text_content: str, reply_to: str = None, email_type: str = "general", order_id: str = None, customer_name: str = None):
     """Generic email sending function with logging"""
     try:
         msg = MIMEMultipart('alternative')
@@ -404,10 +436,18 @@ def send_email(to_email: str, subject: str, html_content: str, text_content: str
             server.sendmail(SMTP_FROM, to_email, msg.as_string())
         
         logger.info(f"✅ EMAIL SENT: To={to_email}, Subject={subject}")
+        
+        # Log to database
+        _log_email_to_db(to_email, subject, email_type, "sent", order_id, customer_name)
+        
         return True
         
     except Exception as e:
         logger.error(f"❌ EMAIL FAILED: To={to_email}, Subject={subject}, Error={str(e)}")
+        
+        # Log failed email to database
+        _log_email_to_db(to_email, subject, email_type, "failed", order_id, customer_name, {"error": str(e)})
+        
         return False
 
 
@@ -496,7 +536,7 @@ def send_contact_form_email(contact_data: dict):
     {bericht}
     """
     
-    return send_email(OWNER_EMAIL, subject, html_content, text_content, reply_to=email)
+    return send_email(OWNER_EMAIL, subject, html_content, text_content, reply_to=email, email_type="contact_form", customer_name=naam)
 
 
 def send_checkout_started_email(checkout_data: dict):
@@ -599,7 +639,7 @@ def send_checkout_started_email(checkout_data: dict):
         text_content += f"\n- {item.get('name', 'Product')} x{item.get('quantity', 1)} = €{item.get('price', 0):.2f}"
     text_content += f"\n\nTOTAAL: €{total_amount:.2f}"
     
-    return send_email(OWNER_EMAIL, subject, html_content, text_content, reply_to=customer_email)
+    return send_email(OWNER_EMAIL, subject, html_content, text_content, reply_to=customer_email, email_type="checkout_started")
 
 
 def send_order_notification_email(order_data: dict, event_type: str):
@@ -726,7 +766,7 @@ def send_order_notification_email(order_data: dict, event_type: str):
         text_content += f"\n- {item.get('product_name', 'Product')} x{item.get('quantity', 1)} = €{item.get('price', 0):.2f}"
     text_content += f"\n\nTOTAAL: €{total_amount:.2f}"
     
-    return send_email(OWNER_EMAIL, subject, html_content, text_content, reply_to=customer_email)
+    return send_email(OWNER_EMAIL, subject, html_content, text_content, reply_to=customer_email, email_type=event_type, order_id=order_id, customer_name=customer_name)
 
 
 def send_order_confirmation_email(order_data: dict):
@@ -862,10 +902,18 @@ def send_order_confirmation_email(order_data: dict):
             server.sendmail(SMTP_FROM, customer_email, msg.as_string())
         
         logger.info(f"✅ Order confirmation email sent to {customer_email}")
+        
+        # Log email to database
+        _log_email_to_db(customer_email, f'Bedankt voor je bestelling! #{order_id}', "order_confirmation", "sent", order_id, customer_name)
+        
         return True
         
     except Exception as e:
         logger.error(f"❌ Failed to send order confirmation email: {str(e)}")
+        
+        # Log failed email
+        _log_email_to_db(customer_email, f'Bedankt voor je bestelling!', "order_confirmation", "failed", None, customer_name, {"error": str(e)})
+        
         return False
 
 

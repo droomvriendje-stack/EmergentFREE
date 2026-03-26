@@ -503,3 +503,79 @@ agent_communication:
       1. **HIGH PRIORITY:** Fix cart persistence issue in CartContext.jsx
       2. **MEDIUM:** Re-test checkout page mobile optimization after cart fix
       3. **LOW:** Verify Trust Section implementation and responsive behavior
+
+
+#====================================================================================================
+# NEW SESSION - Email Logs & Analytics Integration (March 2026)
+#====================================================================================================
+
+new_tasks:
+  - task: "Email Logs API"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/routes/email_logs.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Email logs route aangemaakt met GET /api/email-logs/ en GET /api/email-logs/stats endpoints. Supabase tabel moet nog handmatig aangemaakt worden."
+
+  - task: "Automatisch Email Logging"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "send_email functie aangepast om automatisch te loggen naar database. _log_email_to_db helper functie toegevoegd."
+
+  - task: "Admin Email Logs Pagina"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/src/pages/admin/EmailLogsPage.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Email logs overzicht pagina met filters (type, status, periode), statistieken cards, en email type breakdown. Route: /admin/email-logs"
+
+  - task: "Google Analytics Integratie"
+    implemented: true
+    working: true
+    file: "/app/frontend/public/index.html"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Google Analytics GA4 al geïntegreerd met Measurement ID G-HGF9SEQG7Q. Full e-commerce tracking beschikbaar in /utils/analytics.js"
+
+agent_communication:
+  - agent: "main"
+    message: |
+      ACTIE VEREIST - Supabase tabel aanmaken:
+      
+      Voer deze SQL uit in Supabase SQL Editor:
+      
+      CREATE TABLE IF NOT EXISTS email_logs (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          to_email VARCHAR(255) NOT NULL,
+          subject VARCHAR(500) NOT NULL,
+          email_type VARCHAR(50) NOT NULL,
+          status VARCHAR(20) DEFAULT 'sent',
+          order_id VARCHAR(100),
+          customer_name VARCHAR(255),
+          metadata JSONB,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      
+      CREATE INDEX IF NOT EXISTS idx_email_logs_created_at ON email_logs(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_email_logs_email_type ON email_logs(email_type);
