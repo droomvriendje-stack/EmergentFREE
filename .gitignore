@@ -54,3 +54,7 @@ uploads/*
 
 # Emergent specific (no longer needed)
 .emergent/
+-e 
+# Environment files
+*.env
+*.env.*
