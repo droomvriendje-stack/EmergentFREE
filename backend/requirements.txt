@@ -144,3 +144,5 @@ yarl==1.22.0
 zipp==3.23.0
 zstandard==0.25.0
 postmarker
+pymongo==4.10.1
+motor==3.6.0
