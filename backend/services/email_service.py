@@ -1,6 +1,7 @@
 """
 Email Marketing Service for Droomvriendjes
 Handles abandoned cart tracking, email flows, and statistics
+Uses Supabase as the database backend
 """
 
 import smtplib
@@ -12,7 +13,6 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
-from motor.motor_asyncio import AsyncIOMotorClient
 import asyncio
 
 logger = logging.getLogger(__name__)

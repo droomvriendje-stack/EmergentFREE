@@ -1,7 +1,6 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Depends
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
 from supabase import create_client, Client as SupabaseClient
 import os
 import logging
@@ -49,37 +48,13 @@ if env_path.exists():
 else:
     logger.warning(f"No .env file found at {env_path}, using system environment variables only")
 
-# MongoDB connection - Support both local and Atlas MongoDB (LEGACY - kept for backwards compatibility)
-mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
-db_name = os.environ.get('DB_NAME', 'droomvriendje')
-
-# Initialize MongoDB client with SSL certificate handling for Atlas
-try:
-    import certifi
-    # Use certifi for proper SSL certificate verification
-    client = AsyncIOMotorClient(
-        mongo_url,
-        tlsCAFile=certifi.where(),
-        serverSelectionTimeoutMS=10000
-    )
-    db = client[db_name]
-    logger.info(f"MongoDB connected to: {db_name}")
-except ImportError:
-    # Fallback without certifi
-    client = AsyncIOMotorClient(mongo_url)
-    db = client[db_name]
-    logger.info(f"MongoDB connected to: {db_name} (without certifi)")
-except Exception as e:
-    logger.error(f"MongoDB connection error: {e}")
-    raise
-
-# ============== SUPABASE CONNECTION ==============
+# ============== SUPABASE CONNECTION (PRIMARY DATABASE) ==============
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://qoykbhocordugtbvpvsl.supabase.co")
 SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
 
-# Use Supabase as primary database (set to True to enable)
-USE_SUPABASE = os.environ.get("USE_SUPABASE", "true").lower() == "true"
+# Supabase is now the ONLY database - MongoDB has been removed
+USE_SUPABASE = True  # Always true
 
 supabase_client: SupabaseClient = None
 if SUPABASE_SERVICE_KEY or SUPABASE_ANON_KEY:
@@ -89,10 +64,39 @@ if SUPABASE_SERVICE_KEY or SUPABASE_ANON_KEY:
         logger.info(f"✅ Supabase connected to: {SUPABASE_URL}")
     except Exception as e:
         logger.error(f"❌ Supabase connection error: {e}")
-        USE_SUPABASE = False
+        raise RuntimeError("Supabase is required but connection failed")
 else:
-    logger.warning("⚠️ Supabase keys not configured, using MongoDB")
-    USE_SUPABASE = False
+    logger.warning("⚠️ Supabase keys not configured - database features will not work")
+
+# Legacy db variable for backwards compatibility (dummy object that returns empty results)
+class DummyDB:
+    """Dummy database class for backwards compatibility - all new code should use Supabase"""
+    def __getattr__(self, name):
+        class DummyCollection:
+            async def find(self, *args, **kwargs):
+                return self
+            async def find_one(self, *args, **kwargs):
+                return None
+            async def insert_one(self, *args, **kwargs):
+                return type('obj', (object,), {'inserted_id': str(uuid.uuid4())})()
+            async def update_one(self, *args, **kwargs):
+                return type('obj', (object,), {'modified_count': 0})()
+            async def delete_one(self, *args, **kwargs):
+                return type('obj', (object,), {'deleted_count': 0})()
+            async def count_documents(self, *args, **kwargs):
+                return 0
+            def aggregate(self, *args, **kwargs):
+                return self
+            async def to_list(self, *args, **kwargs):
+                return []
+            def __aiter__(self):
+                return self
+            async def __anext__(self):
+                raise StopAsyncIteration
+        return DummyCollection()
+
+db = DummyDB()
+logger.info("📦 MongoDB removed - Supabase is the primary database")
 
 # Mollie configuration - read fresh from environment each time
 # This ensures Kubernetes environment variables are always used
@@ -4293,5 +4297,5 @@ async def shutdown_db_client():
             pass
         logger.info("🛑 Abandoned cart scheduler stopped")
     
-    client.close()
-    logger.info("🛑 Database connection closed")
+    # MongoDB client removed - Supabase handles connections automatically
+    logger.info("🛑 Application shutdown complete")
