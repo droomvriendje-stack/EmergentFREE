@@ -1,0 +1,23 @@
+# Frontend Dockerfile for local development
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Copy package files
+COPY package.json yarn.lock ./
+
+# Install dependencies
+RUN yarn install --frozen-lockfile
+
+# Copy source code
+COPY . .
+
+# Build the app
+RUN yarn build
+
+# Serve with a simple server
+RUN yarn global add serve
+
+EXPOSE 3000
+
+CMD ["serve", "-s", "build", "-l", "3000"]

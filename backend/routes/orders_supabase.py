@@ -290,7 +290,9 @@ async def create_payment(payment: PaymentCreate):
             'method': payment.payment_method,
             'metadata': {
                 'order_id': payment.order_id,
-                'customer_email': order['customer_email']
+                'customer_email': order['customer_email'],
+                'discount_code': order.get('discount_code', ''),
+                'discount_amount': str(order.get('discount_amount', 0))
             }
         }
         

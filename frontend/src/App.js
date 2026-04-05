@@ -6,6 +6,7 @@ import { CartProvider } from "./context/CartContext";
 import { ProductsProvider } from "./context/ProductsContext";
 import { AdminAuthProvider, ProtectedAdminRoute } from "./context/AdminAuthContext";
 import WhatsAppButton from "./components/WhatsAppButton";
+import WelcomePopup from "./components/WelcomePopup";
 import HomePage from "./pages/HomePage";
 import ProductPage from "./pages/ProductPage";
 import CheckoutPage from "./pages/CheckoutPage";
@@ -175,6 +176,7 @@ function App() {
             </Routes>
             <Toaster />
             <WhatsAppButton />
+            <WelcomePopup />
           </AdminAuthProvider>
         </BrowserRouter>
       </CartProvider>

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { Helmet } from 'react-helmet-async';
 import { useCart } from '../context/CartContext';
 import { useProducts } from '../context/ProductsContext';
 import { benefits, features, videos, faqs } from '../mockData';
@@ -17,6 +18,17 @@ import { trackViewItemList, trackSelectItem } from '../utils/analytics';
 import 'swiper/css';
 import 'swiper/css/navigation';
 import 'swiper/css/pagination';
+
+// SEO Keywords for Droomvriendjes
+const SEO_KEYWORDS = [
+  'slaapknuffel met sterrenprojectie',
+  'slaapknuffel white noise kinderen',
+  'knuffel die helpt met slapen',
+  'slaapknuffel nachtlampje kind',
+  'slaapknuffel cadeau baby shower',
+  'slaapknuffel volwassenen',
+  'kind bang in het donker knuffel'
+].join(', ');
 
 
 const HomePage = () => {
@@ -77,6 +89,18 @@ const HomePage = () => {
 
   return (
     <div className="min-h-screen bg-cream">
+      {/* SEO Meta Tags */}
+      <Helmet>
+        <title>Droomvriendjes | Slaapknuffel met Nachtlampje & Sterrenprojectie | White Noise Knuffel</title>
+        <meta name="description" content="De beste slaapknuffel voor kinderen met nachtlampje, sterrenprojectie en white noise. Helpt je kind rustig slapen. Perfect als kraamcadeau of babyshower gift. Ook voor volwassenen en kinderen die bang zijn in het donker." />
+        <meta name="keywords" content={SEO_KEYWORDS} />
+        <meta property="og:title" content="Droomvriendjes | Slaapknuffel met Nachtlampje & Sterrenprojectie" />
+        <meta property="og:description" content="De beste slaapknuffel voor kinderen met nachtlampje, sterrenprojectie en white noise. Helpt je kind rustig slapen." />
+        <meta property="og:type" content="website" />
+        <meta property="og:url" content="https://droomvriendjes.nl" />
+        <link rel="canonical" href="https://droomvriendjes.nl" />
+      </Helmet>
+
       {/* Header */}
       <Header />
 

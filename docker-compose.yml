@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  backend:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - MOLLIE_API_KEY=${MOLLIE_API_KEY}
+      - MOLLIE_PROFILE_ID=${MOLLIE_PROFILE_ID}
+      - FRONTEND_URL=${FRONTEND_URL:-https://droomvriendjes.nl}
+      - API_URL=${API_URL:-https://api.droomvriendjes.nl}
+      - CORS_ORIGINS=${CORS_ORIGINS:-https://droomvriendjes.nl}
+      - POSTMARK_API_TOKEN=${POSTMARK_API_TOKEN}
+      - SMTP_FROM=${SMTP_FROM:-info@droomvriendjes.nl}
+      - SENDCLOUD_PUBLIC_KEY=${SENDCLOUD_PUBLIC_KEY}
+      - SENDCLOUD_SECRET_KEY=${SENDCLOUD_SECRET_KEY}
+    volumes:
+      - ./backend:/app/backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_BACKEND_URL=${API_URL:-http://localhost:8000}
+      - REACT_APP_SUPABASE_URL=${SUPABASE_URL}
+      - REACT_APP_SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+    depends_on:
+      - backend

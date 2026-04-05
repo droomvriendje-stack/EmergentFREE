@@ -1,18 +1,30 @@
 import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { X, MessageCircle } from 'lucide-react';
 
 // WhatsApp configuration
-const WHATSAPP_NUMBER = '31684588815';
+// NOTE: WhatsApp button is only shown on the contact page (/contact)
+// For other pages, use Google Tag Manager (GTM-W9PZRP4B) to control visibility
+const WHATSAPP_NUMBER = '+31684588815';
 const WHATSAPP_DEFAULT_MESSAGE = encodeURIComponent('Hallo! Ik heb een vraag over Droomvriendjes 🧸');
-const WHATSAPP_LINK = `https://wa.me/${WHATSAPP_NUMBER}?text=${WHATSAPP_DEFAULT_MESSAGE}`;
+const WHATSAPP_LINK = `https://wa.me/${WHATSAPP_NUMBER.replace('+', '')}?text=${WHATSAPP_DEFAULT_MESSAGE}`;
+
+// Pages where WhatsApp button should be visible
+const WHATSAPP_VISIBLE_PAGES = ['/contact'];
 
 const WhatsAppButton = () => {
+  const location = useLocation();
   const [isOpen, setIsOpen] = useState(false);
   const [showPulse, setShowPulse] = useState(true);
   const [hasInteracted, setHasInteracted] = useState(false);
 
+  // Check if button should be visible on current page
+  const isVisible = WHATSAPP_VISIBLE_PAGES.includes(location.pathname);
+
   // Show tooltip after 5 seconds if user hasn't interacted
   useEffect(() => {
+    if (!isVisible) return;
+    
     const timer = setTimeout(() => {
       if (!hasInteracted) {
         setIsOpen(true);
@@ -20,7 +32,7 @@ const WhatsAppButton = () => {
     }, 5000);
     
     return () => clearTimeout(timer);
-  }, [hasInteracted]);
+  }, [hasInteracted, isVisible]);
 
   // Auto-hide tooltip after 10 seconds
   useEffect(() => {
@@ -31,6 +43,9 @@ const WhatsAppButton = () => {
       return () => clearTimeout(timer);
     }
   }, [isOpen, hasInteracted]);
+
+  // Don't render if not on visible page
+  if (!isVisible) return null;
 
   const handleClick = () => {
     setHasInteracted(true);
