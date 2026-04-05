@@ -6,7 +6,7 @@ import pytest
 import requests
 import os
 
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://match-dreams-app.preview.emergentagent.com')
+BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://railway-fix-staging.preview.emergentagent.com')
 TEST_PRODUCT_ID = "04808c1d-03ea-4a49-9c22-edd85c1148e9"  # Schaapje product
 
 

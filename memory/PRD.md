@@ -86,6 +86,6 @@
 5. **P2:** Admin panel thema update
 
 ## Notes
-- Preview URL: https://match-dreams-app.preview.emergentagent.com
+- Preview URL: https://railway-fix-staging.preview.emergentagent.com
 - Productie: www.droomvriendjes.nl (vereist deployment)
 - Taal: Nederlands (alle UI en content)
