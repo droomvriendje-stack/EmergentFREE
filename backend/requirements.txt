@@ -14,7 +14,7 @@ storage3==2.28.0
 realtime==2.28.0
 
 # MongoDB (legacy / async support)
-pymongo==4.10.1
+pymongo==4.9.2
 motor==3.6.0
 
 # Environment & Config
