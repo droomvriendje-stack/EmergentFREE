@@ -187,7 +187,13 @@ app = FastAPI()
 
 # Mount static files directory for serving the frontend website
 STATIC_DIR = ROOT_DIR / "static"
-if STATIC_DIR.exists():
+ASSETS_DIR = STATIC_DIR / "assets"
+if ASSETS_DIR.exists():
+    # Vite builds JS/CSS into dist/assets/ — serve them at /assets so the
+    # hashed filenames referenced in index.html resolve correctly.
+    app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
+    logger.info(f"✅ Frontend assets mounted from: {ASSETS_DIR}")
+elif STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     logger.info(f"✅ Static files mounted from: {STATIC_DIR}")
 else:
@@ -3561,6 +3567,17 @@ async def start_post_purchase_flow(order_id: str):
 
 # Include the router in the main app
 app.include_router(api_router)
+
+# SPA catch-all: serve index.html for any unmatched path so React Router
+# can handle client-side navigation (e.g. /product/123, /cart, /checkout).
+# This must be registered AFTER all API routes so it never shadows them.
+@app.get("/{full_path:path}")
+async def spa_fallback(full_path: str):
+    """Serve the React SPA for all non-API routes."""
+    index_file = ROOT_DIR / "static" / "index.html"
+    if index_file.exists():
+        return FileResponse(str(index_file))
+    raise HTTPException(status_code=404, detail="Not found")
 
 # ============== GOOGLE SHOPPING XML FEED ==============
 
