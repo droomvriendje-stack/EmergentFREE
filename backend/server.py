@@ -1,4 +1,6 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Depends
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from supabase import create_client, Client as SupabaseClient
@@ -182,6 +184,14 @@ OWNER_EMAIL = "info@droomvriendjes.nl"
 
 # Create the main app without a prefix
 app = FastAPI()
+
+# Mount static files directory for serving the frontend website
+STATIC_DIR = ROOT_DIR / "static"
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    logger.info(f"✅ Static files mounted from: {STATIC_DIR}")
+else:
+    logger.warning(f"⚠️ Static directory not found at {STATIC_DIR} - static file serving disabled")
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
@@ -396,7 +406,10 @@ async def get_products_for_feed():
 
 @app.get("/")
 async def root():
-    """Root endpoint"""
+    """Serve the homepage (index.html from the static directory)"""
+    index_file = ROOT_DIR / "static" / "index.html"
+    if index_file.exists():
+        return FileResponse(str(index_file))
     return {"status": "ok"}
 
 @app.get("/health")
