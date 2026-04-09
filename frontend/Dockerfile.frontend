@@ -4,19 +4,19 @@ FROM node:20-alpine
 WORKDIR /app
 
 # Copy package files
-COPY package.json yarn.lock ./
+COPY package.json ./
 
 # Install dependencies
-RUN yarn install --frozen-lockfile
+RUN npm install
 
 # Copy source code
 COPY . .
 
 # Build the app
-RUN yarn build
+RUN npm run build
 
 # Serve with a simple server
-RUN yarn global add serve
+RUN npm install -g serve
 
 EXPOSE 3000
 
