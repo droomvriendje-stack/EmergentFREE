@@ -25,4 +25,4 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 # Custom nginx config with /health endpoint and SPA support
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-CMD ["/bin/sh", "-c", "envsubst '${PORT}' < /etc/nginx/conf.d/default.conf > /tmp/default.conf && mv /tmp/default.conf /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
+CMD ["/bin/sh", "-c", "sed -i \"s/__PORT__/$PORT/g\" /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
