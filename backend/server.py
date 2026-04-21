@@ -2968,7 +2968,7 @@ class CreateCampaignRequest(BaseModel):
 @api_router.get("/google-ads/status")
 async def google_ads_status():
     """Check Google Ads API configuration status"""
-    from services.google_ads_service import google_ads_service, GOOGLE_ADS_CONFIG, CUSTOMER_ID, MERCHANT_CENTER_ID
+    from backend.services.google_ads_service import google_ads_service, GOOGLE_ADS_CONFIG, CUSTOMER_ID, MERCHANT_CENTER_ID
     
     return {
         "configured": google_ads_service.is_configured,
@@ -2986,7 +2986,7 @@ oauth_states = {}
 @api_router.get("/google-ads/oauth-url")
 async def get_google_ads_oauth_url(request: Request):
     """Get OAuth authorization URL for Google Ads with CSRF protection"""
-    from services.google_ads_service import google_ads_service
+    from backend.services.google_ads_service import google_ads_service
     import secrets
     
     # Use the request's origin for dynamic redirect URI
@@ -3024,7 +3024,7 @@ class OAuthCallbackRequest(BaseModel):
 @api_router.post("/google-ads/oauth-callback")
 async def google_ads_oauth_callback(request: OAuthCallbackRequest):
     """Exchange OAuth code for tokens with CSRF verification"""
-    from services.google_ads_service import google_ads_service
+    from backend.services.google_ads_service import google_ads_service
     
     # Verify state for CSRF protection
     if request.state not in oauth_states:
@@ -3066,7 +3066,7 @@ async def google_ads_oauth_callback(request: OAuthCallbackRequest):
 @api_router.get("/google-ads/campaigns")
 async def get_google_ads_campaigns():
     """Get all Shopping campaigns from Google Ads"""
-    from services.google_ads_service import google_ads_service
+    from backend.services.google_ads_service import google_ads_service
     
     try:
         campaigns = google_ads_service.get_shopping_campaigns()
@@ -3078,7 +3078,7 @@ async def get_google_ads_campaigns():
 @api_router.post("/google-ads/campaigns/create")
 async def create_google_ads_campaign(request: CreateCampaignRequest):
     """Create a new Shopping campaign"""
-    from services.google_ads_service import google_ads_service
+    from backend.services.google_ads_service import google_ads_service
     
     try:
         result = google_ads_service.create_shopping_campaign(
@@ -3100,7 +3100,7 @@ async def create_google_ads_campaign(request: CreateCampaignRequest):
 @api_router.get("/google-ads/account")
 async def get_google_ads_account():
     """Get Google Ads account information"""
-    from services.google_ads_service import google_ads_service
+    from backend.services.google_ads_service import google_ads_service
     
     try:
         account_info = google_ads_service.get_account_info()
@@ -3165,7 +3165,7 @@ PREDEFINED_CAMPAIGNS = [
 @api_router.post("/google-ads/campaigns/bulk-create")
 async def bulk_create_campaigns(request: BulkCampaignRequest):
     """Create multiple campaigns at once"""
-    from services.google_ads_service import google_ads_service
+    from backend.services.google_ads_service import google_ads_service
     
     try:
         result = google_ads_service.create_bulk_campaigns(request.campaigns)
@@ -3178,7 +3178,7 @@ async def bulk_create_campaigns(request: BulkCampaignRequest):
 @api_router.post("/google-ads/campaigns/create-predefined")
 async def create_predefined_campaigns(request: PredefinedCampaignsRequest = None):
     """Create predefined Droomvriendjes campaigns (all 20 or selected by ID)"""
-    from services.google_ads_service import google_ads_service
+    from backend.services.google_ads_service import google_ads_service
     
     try:
         # Select campaigns to create
@@ -3431,7 +3431,7 @@ async def upload_feed_to_merchant_center():
 
 # ============== EMAIL MARKETING API ==============
 
-from services.email_service import EmailService, EMAIL_TEMPLATES
+from backend.services.email_service import EmailService, EMAIL_TEMPLATES
 
 # Initialize email service (will be set on startup)
 email_service = None
@@ -3727,7 +3727,7 @@ async def google_shopping_feed():
 
 # ============== EMAIL MARKETING API ==============
 
-from services.email_service import EmailService, EMAIL_TEMPLATES
+from backend.services.email_service import EmailService, EMAIL_TEMPLATES
 
 # Initialize email service
 email_service = None
