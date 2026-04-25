@@ -2,13 +2,13 @@ import axios from 'axios';
 
 // Base URL for the backend API.
 // In production this is set via the VITE_API_URL environment variable
-// (injected at build time by Vite). Falls back to the production URL
-// so API calls always reach the correct service even if the env var
-// is not explicitly set at build time.
-export const API_URL = import.meta.env.VITE_API_URL || 'https://web-production-3e5df6.up.railway.app';
+// (injected at build time by Vite). The fallback is used only when the
+// env var is not available at build time — ensure VITE_API_URL is set
+// in the Railway service variables so the correct backend is always reached.
+export const API_URL = import.meta.env.VITE_API_URL || 'https://api-production.up.railway.app';
 
 // Base URL for the products API (separate service).
-export const PRODUCTS_API_URL = import.meta.env.VITE_PRODUCTS_API_URL || 'https://web-production-3e5df6.up.railway.app';
+export const PRODUCTS_API_URL = import.meta.env.VITE_PRODUCTS_API_URL || 'https://api-production.up.railway.app';
 
 /**
  * Pre-configured axios instance for all backend API calls.
